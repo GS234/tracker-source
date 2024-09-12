@@ -133,13 +133,12 @@ class DetectionSpace:
     def estimateNext_t(self, t=1):
         self.D.append([d.estimateNext(t) for d in self.D[-1]])
     
-    # !!! POMEMBNO [TODO]
+    # !!! POMEMBNO [TODO - fix/adjust]
     # estimates next point in trajectory given collected detections and prediction
-    # should also estimate v, theta [TODO]
     # x_t -> x_t+1
-    def estimateNext2(self, d: Detection, dt=1):
+    def estimateNext2(self, d: Detection, dt=1) -> Detection:
         # 1. predict next point from current detection
-        x_p = d.estimateNext(dt) # oftype Detection !!
+        x_p = d.estimateNext(dt) # oftype Detection
         
         # 2. collect detections around prediction:
         t_i1 = x_p.t # already contains new time
@@ -164,18 +163,34 @@ class DetectionSpace:
         # 3. compute weighted mean (prediction + all detections) to determine actual next point
         
         # temporal discount, as used in paper [pami, leibe et al. ...] = e^-lambda
-        L = 0 # lambda: temporal discount ([TODO] - un-hardcode)
+        L = 0 # lambda: temporal discount ([TODO] - un-hardcode) (should be large)
         p_tempDisc = np.exp(-L)
 
         # calculate normalization factor Z (sum of all weights):
         Z = np.sum(next_detections_probs)+p_tempDisc
         print("Z: ",Z)
 
-
-
         x_t1 = np.array((1/Z) * ( p_tempDisc * x_p.x + np.dot(next_detections_probs, next_detections_X) )).astype(np.int32)
         print("x(t+1): ",x_t1)
-        return x_t1
+
+        # 4. also estimate velocity, angle (based on x_t+1: no need to calculate weights, estimates again, as they are the same)
+        # velocity: v_t1 = sqrt( dolzina vektorja (x_t1 - x_t) )
+        x_dif = d.x-x_t1
+        x_dif = x_dif/dt # we do that here, velocity is then simply it's length
+        v_t1 = np.sqrt(np.dot(x_dif,x_dif))
+
+        # theta:
+        # calculate relative to unit base vector x_i
+        # base_x = np.array([1.0,0.0]) # -> not needed, see notes
+        cos_theta = x_dif[0] / v_t1 # this is it, just trust me bro
+        theta_t1 = np.arccos(cos_theta) # co-domain is only from 0-pi, not a problem, because ellipse is symmetrical (so essentialy v ~ -v)
+        if(x_dif[1] < 0): # same angle is computed for both sides, because we only compare magnitude, so correction is needed in some cases
+            theta_t1 = -theta_t1
+        
+        d_t1 = Detection(x_t1,v_t1,t_i1,theta_t1) # next detection, it should probably be something else
+
+        # return x_t1
+        return d_t1
         
     
 
@@ -304,17 +319,18 @@ def main():
     
     d0 = Detection((250,250), 0, 0, (np.pi/180.0)*0)
     d1_1 = Detection((240,240), 0, 1, 0)
-    d1_2 = Detection((240,260), 0, 1, 0)
-    d1_3 = Detection((250,270), 0, 1, 0)
-    d1_4 = Detection((210,140), 0, 1, 0)
-    d1_5 = Detection((270,300), 0, 1, 0)
+    # d1_2 = Detection((250,240), 0, 1, 0)
+    # d1_3 = Detection((250,220), 0, 1, 0)
+    # d1_4 = Detection((210,140), 0, 1, 0)
+    # d1_5 = Detection((270,200), 0, 1, 0)
     D0 = [d0]
     
     # create detection space object:
     dspace = DetectionSpace(n, D0)
 
     # add some more detections to space (at time t=1)
-    D1 = [d1_1,d1_2,d1_3,d1_4,d1_5]
+    # D1 = [d1_1,d1_2,d1_3,d1_4,d1_5]
+    D1 = [d1_1]
     dspace.D.append(D1)
 
     print("is within?")
@@ -325,12 +341,13 @@ def main():
     dspace.drawProbDistAroundDetection(d0)
 
     d1 = dspace.estimateNext2(d0)
-    dspace.drawX(d1)
+    dspace.drawX(d1.x)
     dspace.drawX(d0.x, 0.1)
 
 
 
     dspace.drawDsearchRegionAroundDetection(d0)
+    dspace.drawDsearchRegionAroundDetection(d1)
     dspace.showSpace()
 
 

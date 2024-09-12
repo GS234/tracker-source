@@ -134,8 +134,7 @@ class DetectionSpace:
         self.D.append([d.estimateNext(t) for d in self.D[-1]])
     
     # !!! POMEMBNO [TODO - fix/adjust]
-    # estimates next point in trajectory given collected detections and prediction
-    # x_t -> x_t+1
+    # estimates next point in trajectory given collected detections and prediction (x_t -> x_t+1)
     def estimateNext2(self, d: Detection, dt=1) -> Detection:
         # 1. predict next point from current detection
         x_p = d.estimateNext(dt) # oftype Detection
@@ -147,10 +146,11 @@ class DetectionSpace:
         next_detections = [] # store 'em in list
         next_detections_probs = [] # weights: sampled from distribution (bivariate normal dist, see Detection.getProb())
         
-        for d_i in self.D[t_i1]:
-            if(x_p.isWithin(d_i)):
-                next_detections.append(d_i) # store detections, for now
-                next_detections_probs.append(x_p.getProb(d_i)) # get probability score from nearby point
+        if(t_i1 < len(self.D)): # check only if has detections in this layer
+            for d_i in self.D[t_i1]:
+                if(x_p.isWithin(d_i)):
+                    next_detections.append(d_i) # store detections, for now
+                    next_detections_probs.append(x_p.getProb(d_i)) # get probability score from nearby point
         
         # change detection list into coordinate list:
         n_det = len(next_detections) # number of detections (i)
@@ -182,18 +182,17 @@ class DetectionSpace:
         # theta:
         # calculate relative to unit base vector x_i
         # base_x = np.array([1.0,0.0]) # -> not needed, see notes
-        cos_theta = x_dif[0] / v_t1 # this is it, just trust me bro
-        theta_t1 = np.arccos(cos_theta) # co-domain is only from 0-pi, not a problem, because ellipse is symmetrical (so essentialy v ~ -v)
+        theta_t1 = d.theta
+        if(v_t1 != 0): # only if it has speed this is relevant
+            cos_theta = x_dif[0] / v_t1  # this is it, just trust me bro
+            theta_t1 = np.arccos(cos_theta) # co-domain is only from 0-pi, not a problem, because ellipse is symmetrical (so essentialy v ~ -v)
         if(x_dif[1] < 0): # same angle is computed for both sides, because we only compare magnitude, so correction is needed in some cases
             theta_t1 = -theta_t1
         
         d_t1 = Detection(x_t1,v_t1,t_i1,theta_t1) # next detection, it should probably be something else
-
         # return x_t1
         return d_t1
         
-    
-
     # might be needed to move it elsewhere
     def drawDsearchRegionAroundLastDetections(self):
         for d in self.D[-1]:
@@ -317,7 +316,7 @@ def main():
     n = 500 # canvas size
     seed = 42
     
-    d0 = Detection((250,250), 0, 0, (np.pi/180.0)*0)
+    d0 = Detection((250,250), -4, 0, (np.pi/180.0)*0)
     d1_1 = Detection((240,240), 0, 1, 0)
     # d1_2 = Detection((250,240), 0, 1, 0)
     # d1_3 = Detection((250,220), 0, 1, 0)
@@ -330,27 +329,25 @@ def main():
 
     # add some more detections to space (at time t=1)
     # D1 = [d1_1,d1_2,d1_3,d1_4,d1_5]
-    D1 = [d1_1]
-    dspace.D.append(D1)
+    # D1 = [d1_1]
+    # dspace.D.append(D1)
 
-    print("is within?")
-    for d in D1:
-        print(d,d0.isWithin(d))
-    print("---")
+    # print("is within?")
+    # for d in D1:
+    #     print(d,d0.isWithin(d))
+    # print("---")
 
-    dspace.drawProbDistAroundDetection(d0)
+    # dspace.drawProbDistAroundDetection(d0)
 
     d1 = dspace.estimateNext2(d0)
     dspace.drawX(d1.x)
     dspace.drawX(d0.x, 0.1)
 
-
-
     dspace.drawDsearchRegionAroundDetection(d0)
     dspace.drawDsearchRegionAroundDetection(d1)
+
+    
     dspace.showSpace()
-
-
 
 # -----------
 
@@ -430,7 +427,6 @@ if __name__ == "__main__":
 #     # some test prints:
 #     print(d0.isWithin(new_d))
 
-
 #     dspace.showSpace()
 
 
@@ -440,7 +436,6 @@ if __name__ == "__main__":
 #     seed = 42
 #     show_detections = False
     
-
 #     # some detections:
     
 #     # coordinates:
@@ -472,6 +467,5 @@ if __name__ == "__main__":
 
 #     # draw probability distribution function within detection area:
 #     dspace.drawProbDistAroundDetection(d0)
-
 
 #     dspace.showSpace()

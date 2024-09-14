@@ -10,7 +10,71 @@ R = 10
 # S1, S2 = 180, 60 # default s1,s2
 # S1, S2 = 80, 40 # default s1,s2
 # S1, S2 = 120, 60 # default s1,s2
-S1, S2 = 120, 60 # default s1,s2
+S1, S2 = 12, 6 # default s1,s2
+
+# test trajectories:
+t1 = [
+    [(122, 52)],
+    [(115, 64)],
+    [(120, 79),(112, 81),(116, 83),(116, 84),(114, 87)],
+    [(110, 98),(104, 103),(105, 105),(105, 106),(101, 109),],
+    [(104, 126),(99, 128) ,(98, 129) ,(99, 129) ,(100, 132)],
+    [(114, 146),(114, 147)],
+    [(128, 173),(131, 174),(132, 174)],
+    [(148, 191),(152, 191)],
+    [(146, 207),(145, 210),(148, 210),(145, 211),(148, 211)],
+    [(146, 226)],
+    [(141, 232)],
+    [(133, 232),(133, 234),(133, 236)],
+    [(123, 234)],
+    [(114, 224)],
+    [(103, 210),(103, 211),(104, 212)],
+    [(96, 215)],
+    [(89, 223),(89, 226),(87, 228),(91, 228),(91, 230),(90, 231)],
+    [(93, 242)],
+    [(105, 256)],
+    [(113, 270),(113, 272)],
+    [(118, 285)],
+    [(123, 287)],
+    [(134, 284)],
+    [(145, 294),(143, 295),(146, 296)],
+    [(158, 312)],
+    [(156, 326)],
+    [(160, 338),(160, 339)],
+    [(155, 352),(155, 354)],
+    [(150, 364)],
+    [(144, 373),(143, 374),(142, 375),(140, 376)],
+    [(126, 384)],
+    [(109, 387),(108, 388),(110, 389)],
+    [(97, 398)],
+    [(96, 408),(96, 409)],
+    [(85, 424),(85, 425),(84, 426),(85, 426)],
+    [(80, 439)],
+    [(94, 446)],
+    [(116, 452),(117, 452)],
+    [(139, 440),(137, 441),(136, 442),(137, 442)],
+    [(149, 439)],
+    [(163, 436)],
+    [(188, 426)],
+    [(204, 409)]
+]
+
+
+def coords2det2(X):
+    detections = []
+    i = 0
+    for x_t in X:
+        det_arr = []
+        
+        for x in x_t:
+            det_arr.append(Detection(x,0,i,0))
+        detections.append(det_arr)
+        i = i+1
+    return detections
+
+
+
+# -----------------
 
 
 
@@ -32,6 +96,15 @@ class Detection:
                 [np.sin(self.theta), np.cos(self.theta)]
             ])
     
+    def getRotationMatrix2(self, theta=None):
+        if(theta is None):
+            theta = self.theta
+        return np.array(
+            [
+                [np.cos(theta), -np.sin(theta)],
+                [np.sin(theta), np.cos(theta)]
+            ])
+    
     # calculate next detection estimate from current info (x_p)
     # POMEMBNA ZADEVA
     def estimateNext(self, dt = 1) -> Detection:
@@ -48,9 +121,9 @@ class Detection:
     
     # calculate search region bound coordinates (ellipse)
     # TUDI TO JE POMEMBNA ZADEVA
-    def getSearchRegionBounds2(self, s1=S1, s2=S2, n=50):
+    def getSearchRegionBounds2(self, s1=S1, s2=S2, theta=None, n=50):
         # rotation matrix
-        rot_mat = self.getRotationMatrix()
+        rot_mat = self.getRotationMatrix2(theta)
         
         full_circle = np.arange(0, 2*np.pi, 2*np.pi/n)
 
@@ -200,9 +273,12 @@ class DetectionSpace:
             bounds = d.getSearchRegionBounds2()
             coords2map(bounds, self.map)
     
-    def drawDsearchRegionAroundDetection(self, D: Detection):
+    def drawDsearchRegionAroundDetection(self, D: Detection, a=None, b=None, theta=None):
         # bounds = D.getSearchRegionBounds()
-        bounds = D.getSearchRegionBounds2()
+        s1, s2 = 20,20
+        if((b is not None) and (a is not None)):
+            s1,s2 = a,b
+        bounds = D.getSearchRegionBounds2(s1,s2, theta)
         coords2map(bounds, self.map)
     
     # method draws x instead of .
@@ -259,6 +335,39 @@ class DetectionSpace:
                 self.map[d.x[0]][d.x[1]] = 5.0 # ne deluje, ker se vrednost na novo prepise
                 # self.drawDsearchRegionAroundDetection(d)
         print()
+    
+    # POMEMBNO!!
+    # method takes the trajectory and builds it [TODO]
+    def buildTrajectory(self, t: Trajectory):
+        # 1. detection
+        x_t = t.X[-1] # current point in trajectory (last in array)
+
+
+        # 2. look for next detections (current v, theta) (calculate estimation, look for detections inside its region)
+        self.drawDsearchRegionAroundDetection(x_t, 20, 20, 0)
+        # self.findNextDetections()
+        
+
+        # 3. estimate next detection: weighted mean of detections
+        # 4. add calculated estimate to trajectory
+        # repeat loop
+        
+        
+
+
+class Trajectory:
+    def __init__(self, d0):
+        self.v = 0 # initial velocity is 0
+        self.theta = 0 # theta is also 0
+        self.X = [d0] # trajectory points (detections)
+        self.holes = 0 # counter to count how many trajectory points have been added considering only estimate of next detection
+
+    def estimateNext(self, dt = 1) -> Detection:
+        x = self.X[-1]
+        x_t1 = x[0] + int(dt*self.v*math.cos(self.theta))
+        y_t1 = x[1] + int(dt*self.v*math.sin(self.theta))
+        return Detection((x_t1, y_t1), self.v, self.t+dt, self.theta)
+        
                 
         
 
@@ -316,37 +425,20 @@ def main():
     n = 500 # canvas size
     seed = 42
     
-    d0 = Detection((250,250), -4, 0, (np.pi/180.0)*0)
-    d1_1 = Detection((240,240), 0, 1, 0)
-    # d1_2 = Detection((250,240), 0, 1, 0)
-    # d1_3 = Detection((250,220), 0, 1, 0)
-    # d1_4 = Detection((210,140), 0, 1, 0)
-    # d1_5 = Detection((270,200), 0, 1, 0)
-    D0 = [d0]
+    D = coords2det2(t1)
     
     # create detection space object:
-    dspace = DetectionSpace(n, D0)
+    dspace = DetectionSpace(n)
+    dspace.D = D
 
-    # add some more detections to space (at time t=1)
-    # D1 = [d1_1,d1_2,d1_3,d1_4,d1_5]
-    # D1 = [d1_1]
-    # dspace.D.append(D1)
+    d0 = D[0][0]
+    print(d0)
 
-    # print("is within?")
-    # for d in D1:
-    #     print(d,d0.isWithin(d))
-    # print("---")
-
-    # dspace.drawProbDistAroundDetection(d0)
-
-    d1 = dspace.estimateNext2(d0)
-    dspace.drawX(d1.x)
-    dspace.drawX(d0.x, 0.1)
-
-    dspace.drawDsearchRegionAroundDetection(d0)
-    dspace.drawDsearchRegionAroundDetection(d1)
-
+    th1 = Trajectory(d0)
+    dspace.buildTrajectory(th1)
     
+
+
     dspace.showSpace()
 
 # -----------
@@ -468,4 +560,41 @@ if __name__ == "__main__":
 #     # draw probability distribution function within detection area:
 #     dspace.drawProbDistAroundDetection(d0)
 
+#     dspace.showSpace()
+
+# def main():
+#     n = 500 # canvas size
+#     seed = 42
+    
+#     d0 = Detection((250,250), -4, 0, (np.pi/180.0)*0)
+#     d1_1 = Detection((240,240), 0, 1, 0)
+#     # d1_2 = Detection((250,240), 0, 1, 0)
+#     # d1_3 = Detection((250,220), 0, 1, 0)
+#     # d1_4 = Detection((210,140), 0, 1, 0)
+#     # d1_5 = Detection((270,200), 0, 1, 0)
+#     D0 = [d0]
+    
+#     # create detection space object:
+#     dspace = DetectionSpace(n, D0)
+
+#     # add some more detections to space (at time t=1)
+#     # D1 = [d1_1,d1_2,d1_3,d1_4,d1_5]
+#     # D1 = [d1_1]
+#     # dspace.D.append(D1)
+
+#     # print("is within?")
+#     # for d in D1:
+#     #     print(d,d0.isWithin(d))
+#     # print("---")
+
+#     # dspace.drawProbDistAroundDetection(d0)
+
+#     d1 = dspace.estimateNext2(d0)
+#     dspace.drawX(d1.x)
+#     dspace.drawX(d0.x, 0.1)
+
+#     dspace.drawDsearchRegionAroundDetection(d0)
+#     dspace.drawDsearchRegionAroundDetection(d1)
+
+    
 #     dspace.showSpace()

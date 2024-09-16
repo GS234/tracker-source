@@ -71,7 +71,11 @@ t3 = [
     [(306, 330), (306, 331), (306, 332)],
     [(297, 349), (298, 349)],
     [(303, 362)],
-    [(289, 374), (290, 374), (287, 375), (288, 375), (286, 376)]
+    [(289, 374), (290, 374), (287, 375), (288, 375), (286, 376)],
+    [],
+    [],
+    [],
+    [(255,420)]
 ]
 
 
@@ -209,6 +213,42 @@ class DetectionSpace:
         for i in range(n_det):
             next_detections_X[i] = next_detections[i].x
         return next_detections_X, next_detections_probs
+    
+    # estimate next point in trajectory
+    # input: last detection (for reference: estimate velocity, ...), predicted position, collected detections and their probabilities
+    # output: estimated detection
+    def estimateNext2(self, d_last: Detection, d_predicted: Detection, next_detections_X, next_detections_probs, theta=0, dt=1) -> Detection:
+        x_p = d_predicted # predicted detection
+        x_t = d_last # last detection in trajectory
+        t_i1 = x_t.t+dt # next time
+        
+        # 1. compute weighted mean (prediction + all detections) to determine actual next point
+        # temporal discount, as used in paper [pami, leibe et al. ...] = e^-lambda
+        L = 40 # lambda: temporal discount ([TODO] - un-hardcode) (should be large)
+        p_tempDisc = np.exp(-L)
+
+        # calculate normalization factor Z (sum of all weights):
+        Z = np.sum(next_detections_probs)+p_tempDisc
+        x_t1 = np.array((1/Z) * ( p_tempDisc * x_p.x + np.dot(next_detections_probs, next_detections_X) )).astype(np.int32)
+
+        # 2. also estimate velocity, angle (based on x_t+1: no need to calculate weights, estimates again, as they are the same)
+
+        # velocity:
+        x_dif = x_t1 - x_t.x
+        x_dif = x_dif/dt # we do that here, velocity is then simply it's length
+        v_t1 = np.sqrt(np.dot(x_dif,x_dif))
+
+        # theta:
+        # calculate relative to unit base vector x_i = [1,0]
+        theta_t1 = d_last.theta
+        if(v_t1 != 0): # only if it has speed this is relevant
+            cos_theta = x_dif[0] / v_t1  # this is it, just trust me bro
+            theta_t1 = np.arccos(cos_theta) # co-domain is only from 0-pi, not a problem, because ellipse is symmetrical (so essentialy v ~ -v)
+        if(x_dif[1] < 0): # same angle is computed for both sides, because we only compare magnitude, so correction is needed in some cases
+            theta_t1 = -theta_t1
+        
+        d_t1 = Detection(x_t1,v_t1,t_i1,theta_t1) # next detection, it should probably be something else
+        return (d_t1,x_p)
 
 
 
@@ -327,15 +367,36 @@ class DetectionSpace:
     # method takes the trajectory and builds it [TODO]
     def buildTrajectory(self, t: Trajectory):
         t_n = len(self.D)
+        n_holes_total = 0 # skupno stevilo lukenj
+        n_holes = 0 # stevilo zaporednih lukenj
+        n_holes_max = 5 # najvecje steivlo zaporednih lukenj
         
         for i in range(t_n):
             # 1. detection
-            x_t = t.X[-1].x # current point in trajectory (last in array)
+            d_current = t.X[-1]
+            x_t = d_current.x # current point in trajectory (last in array)
 
             # 2. look for next detections (current v, theta) (calculate estimation, look for detections inside its region)
-            self.drawDsearchRegionAroundDetection(x_t, S1, S2, t.theta)
+            # 2.1 estimate next point:
+            d_pred = t.estimateNext(1)
+            # 2.2 find next detections:
+            # self.drawDsearchRegionAroundDetection(x_t, S1, S2, t.theta)
+            next_coords, next_probs = self.collectWithin(d_pred.t, d_current) # collect in next frame (t+1)
+
+            if(len(next_coords) == 0):
+                n_holes += 1
+                n_holes_total += 1
+                print("empty")
+                if(n_holes >= n_holes_max):
+                    t.holes = n_holes_total
+                    print("maximum no. of sequential holes reached, ending trajectory")
+                    break
+            else:
+                n_holes = 0
+
             # 3. estimate next detection: weighted mean of detections
-            d_next,d_p = self.estimateNext(t)
+            # d_next, _ = self.estimateNext(t)
+            d_next, _ = self.estimateNext2(d_current,d_pred,next_coords,next_probs,t.theta)
             # self.drawX(d_next.x,1.0)
             self.drawLine(x_t, d_next.x, 0.4)
             # self.drawX(d_p.x, 0.8)
@@ -450,6 +511,7 @@ def main():
     dspace.buildTrajectory(th2)
 
     # dspace.drawLine((10,10), (100,70))
+    # dspace.drawX([235,430], 1)
     
     dspace.showSpace()
 
@@ -457,3 +519,54 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# backup
+# # !!! POMEMBNO [TODO - fix/adjust/modify/test]
+#     # estimates next point in trajectory given collected detections and prediction (x_t -> x_t+1)
+#     def estimateNext(self, t:Trajectory, dt=1) -> Detection:
+#         # 1. predict next point from current detection
+#         x_p = t.estimateNext(dt) # oftype Detection
+#         x_t = t.X[-1]
+#         # print("estimated: ", x_p)
+        
+#         # 2. collect detections around prediction:
+#         t_i1 = x_p.t # already contains new time
+#         next_detections_X, next_detections_probs = self.collectWithin(t_i1, x_t)
+
+#         # 3. compute weighted mean (prediction + all detections) to determine actual next point
+#         # temporal discount, as used in paper [pami, leibe et al. ...] = e^-lambda
+#         L = 40 # lambda: temporal discount ([TODO] - un-hardcode) (should be large)
+#         p_tempDisc = np.exp(-L)
+
+#         # calculate normalization factor Z (sum of all weights):
+#         Z = np.sum(next_detections_probs)+p_tempDisc
+#         # print("Z: ",Z)
+
+#         x_t1 = np.array((1/Z) * ( p_tempDisc * x_p.x + np.dot(next_detections_probs, next_detections_X) )).astype(np.int32)
+#         # print(x_t1)
+#         # print("x(t+1): ",x_t1)
+
+#         # 4. also estimate velocity, angle (based on x_t+1: no need to calculate weights, estimates again, as they are the same)
+#         # velocity: v_t1 = sqrt( dolzina vektorja (x_t1 - x_t) )
+        
+#         x_dif = x_t1 - x_t.x
+        
+#         # print(x_t.x, x_t1, x_dif)
+#         x_dif = x_dif/dt # we do that here, velocity is then simply it's length
+#         v_t1 = np.sqrt(np.dot(x_dif,x_dif))
+
+#         # theta:
+#         # calculate relative to unit base vector x_i
+#         # base_x = np.array([1.0,0.0]) # -> not needed, see notes
+#         # print("theta: ",t.theta)
+#         theta_t1 = t.theta
+#         if(v_t1 != 0): # only if it has speed this is relevant
+#             cos_theta = x_dif[0] / v_t1  # this is it, just trust me bro
+#             theta_t1 = np.arccos(cos_theta) # co-domain is only from 0-pi, not a problem, because ellipse is symmetrical (so essentialy v ~ -v)
+#         if(x_dif[1] < 0): # same angle is computed for both sides, because we only compare magnitude, so correction is needed in some cases
+#             theta_t1 = -theta_t1
+        
+#         d_t1 = Detection(x_t1,v_t1,t_i1,theta_t1) # next detection, it should probably be something else
+#         # return x_t1
+#         return (d_t1,x_p)

@@ -64,7 +64,7 @@ def main():
     n = 500
     canv = np.zeros((n,n))
     window_name = "abc"
-    im = cv.imread("t1_n_wo.png", cv.IMREAD_GRAYSCALE)
+    im = cv.imread("images/t_n_wo.png", cv.IMREAD_GRAYSCALE)
 
     X = []
     
@@ -84,30 +84,13 @@ def main():
     
     coords2map(X,canv, 1)
     print(canv[122,52])
-    gray = [(120, 79), (112, 81), (116, 83), (116, 84), (114, 87)]
-    
     
     gray=[
-(80, 439),
+(265, 135),
+(266, 135),
+(266, 136),
+(266, 137),
 
-(94, 446),
-
-(116, 452),
-(117, 452),
-
-
-(139, 440),
-(137, 441),
-(136, 442),
-(137, 442),
-
-(149, 439),
-
-(163, 436),
-
-(188, 426),
-
-(204, 409),
     ]
 
 

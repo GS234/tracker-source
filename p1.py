@@ -7,6 +7,9 @@ import cv2 as cv
 # global vars:
 S1, S2 = 30,30 # default s1,s2
 
+# trajectory id:
+Tid = 0
+
 # test trajectories:
 t1 = [
     [(122, 52)],
@@ -124,6 +127,7 @@ class DetectionSpace:
         self.n = n # map size (dimensions)
         self.map = np.zeros((n,n)).astype(np.float32) # init empty map
         self.window_name = "detection space"
+        self.TR = [] # array for storing trajectories
         
         self.D = []
         if D is not None:
@@ -197,6 +201,7 @@ class DetectionSpace:
     
     # collects detections within search region at time t
     # returns: coordinates, probabilities
+    # [TODO] - maybe need to return detections instead of just vectors
     def collectWithin(self, t, d: Detection):
         # search among detections in next time moment (next frame, that is (whichever, usually immediate successor (dt = 1)))
         next_detections = [] # store 'em in list
@@ -383,6 +388,11 @@ class DetectionSpace:
             # self.drawDsearchRegionAroundDetection(x_t, S1, S2, t.theta)
             next_coords, next_probs = self.collectWithin(d_pred.t, d_current) # collect in next frame (t+1)
 
+            # [TODO] -> add collected points to trajectory for score calculation
+            # 
+            # 
+            # ------------
+
             if(len(next_coords) == 0):
                 n_holes += 1
                 n_holes_total += 1
@@ -410,13 +420,29 @@ class DetectionSpace:
             # t.theta = 0
             # repeat loop
         
+        # [TODO] - add trajectory to array of trajectories
+    
+
+    def buildQPBMatrix():
+        # [TODO] - for every trajectory, calculate qii, qij
+        pass
+        
 
 class Trajectory:
+    # assumptions:
+    # Hi_ti -> if there is only one detection inside of event cone when building trajectory, then this is used as Hi_ti
+    # if there are more, then the one with maximum probability (according to Dt (is defined by trajectory point)) is selected
+    # (could probably also use weighted average / average / random / build hypotheses for all of them (hard??)) --> discussion is needed
+
     def __init__(self, d0):
+        self.id = Tid # unique id of the trajectory
+        Tid = Tid+1
         self.v = 0 # initial velocity is 0
         self.theta = 0 # theta is also 0
         self.X = [d0] # trajectory points (detections)
         self.holes = 0 # counter to count how many trajectory points have been added considering only estimate of next detection
+        self.S = 0 # score/support of the trajectory
+        self.D = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
 
     def estimateNext(self, dt = 1) -> Detection:
         x = self.X[-1].x

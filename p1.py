@@ -7,9 +7,6 @@ import cv2 as cv
 # global vars:
 S1, S2 = 30,30 # default s1,s2
 
-# trajectory id:
-Tid = 0
-
 # test trajectories:
 t1 = [
     [(122, 52)],
@@ -89,6 +86,20 @@ t2 = [
     [(240,240),(260,240),(253,240),(256,240)]
 ]
 
+t4 = [
+[(262, 201)],
+[(254, 206)],
+[(247, 215)],
+[(238, 221),(242, 226)],
+[(229, 233)],
+[(219, 245)],
+[(207, 253)],
+[(202, 262)],
+[(198, 269)],
+[(193, 274)],
+[(182, 280)]
+]
+
 
 def coords2det2(X):
     detections = []
@@ -115,7 +126,8 @@ class Detection:
         self.theta = theta
 
     def __str__(self):
-        return "d{x="+str(self.x)+",v="+str(self.v)+",t="+str(self.t)+",theta="+str(self.theta)+"}"
+        # return "d{x="+str(self.x)+",v="+str(self.v)+",t="+str(self.t)+",theta="+str(self.theta)+"}"
+        return "d{x="+str(self.x)+",t="+str(self.t)+"}"
     
     def __repr__(self):
         return self.__str__()
@@ -200,32 +212,40 @@ class DetectionSpace:
         cv.destroyAllWindows()
     
     # collects detections within search region at time t
-    # returns: coordinates, probabilities
-    # [TODO] - maybe need to return detections instead of just vectors
+    # returns: DETECTIONS (has changed from coordinates, as we need those objects for trajectories), their probabilities
     def collectWithin(self, t, d: Detection):
         # search among detections in next time moment (next frame, that is (whichever, usually immediate successor (dt = 1)))
         next_detections = [] # store 'em in list
         next_detections_probs = [] # weights: sampled from distribution (bivariate normal dist, see Detection.getProb())
         
-        if(t < len(self.D)): # check only if has detections in this layer
+        if(t < len(self.D) and t >= 0): # check only if has detections in this layer (and not before 0 (negative indices overflow))
             for d_i in self.D[t]:
                 if(self.isWithin(d_i.x, d.x)):
                     next_detections.append(d_i) # store detections, for now
                     next_detections_probs.append(self.getProb(d_i.x, d.x)) # get probability score from nearby point
         
-        n_det = len(next_detections) # number of detections (i)
-        next_detections_X = np.zeros((n_det, 2))
-        for i in range(n_det):
-            next_detections_X[i] = next_detections[i].x
-        return next_detections_X, next_detections_probs
+        return next_detections, next_detections_probs
+        
+        # old stuff
+        # n_det = len(next_detections) # number of detections (i)
+        # next_detections_X = np.zeros((n_det, 2))
+        # for i in range(n_det):
+        #     next_detections_X[i] = next_detections[i].x
+        # return next_detections_X, next_detections_probs
     
     # estimate next point in trajectory
     # input: last detection (for reference: estimate velocity, ...), predicted position, collected detections and their probabilities
     # output: estimated detection
-    def estimateNext2(self, d_last: Detection, d_predicted: Detection, next_detections_X, next_detections_probs, theta=0, dt=1) -> Detection:
+    def estimateNext2(self, d_last: Detection, d_predicted: Detection, next_detections, next_detections_probs, theta=0, dt=1) -> Detection:
         x_p = d_predicted # predicted detection
         x_t = d_last # last detection in trajectory
         t_i1 = x_t.t+dt # next time
+
+        # change list of detections to matrix of detections coordinates
+        n_det = len(next_detections) # number of detections (i)
+        next_detections_X = np.zeros((n_det, 2))
+        for i in range(n_det):
+            next_detections_X[i] = next_detections[i].x
         
         # 1. compute weighted mean (prediction + all detections) to determine actual next point
         # temporal discount, as used in paper [pami, leibe et al. ...] = e^-lambda
@@ -267,7 +287,13 @@ class DetectionSpace:
         
         # 2. collect detections around prediction:
         t_i1 = x_p.t # already contains new time
-        next_detections_X, next_detections_probs = self.collectWithin(t_i1, x_t)
+        next_detections, next_detections_probs = self.collectWithin(t_i1, x_t) ####### WARNING!! THIS CAN CAUSE PROBLEMS (LIST ELEMENT TYPES COULD BE DETECTIONS) #######
+        
+        # change list of detections to matrix of detections coordinates
+        n_det = len(next_detections) # number of detections (i)
+        next_detections_X = np.zeros((n_det, 2))
+        for i in range(n_det):
+            next_detections_X[i] = next_detections[i].x
 
         # 3. compute weighted mean (prediction + all detections) to determine actual next point
         # temporal discount, as used in paper [pami, leibe et al. ...] = e^-lambda
@@ -367,15 +393,19 @@ class DetectionSpace:
                     self.map[i][j] = prob
     
     
-    # [TODO - fix/finish]
+    
     # POMEMBNO!!
-    # method takes the trajectory and builds it [TODO]
+    # method takes the trajectory and builds it
+    # [TODO] - finish (should build trajectory in both ways)
     def buildTrajectory(self, t: Trajectory):
         t_n = len(self.D)
         n_holes_total = 0 # skupno stevilo lukenj
         n_holes = 0 # stevilo zaporednih lukenj
         n_holes_max = 5 # najvecje steivlo zaporednih lukenj
         
+        dt_next = 1
+        dt_prev = -1
+
         for i in range(t_n):
             # 1. detection
             d_current = t.X[-1]
@@ -383,17 +413,16 @@ class DetectionSpace:
 
             # 2. look for next detections (current v, theta) (calculate estimation, look for detections inside its region)
             # 2.1 estimate next point:
-            d_pred = t.estimateNext(1)
+            # d_pred = t.estimateNext(-1)
+            d_pred = t.estimateNext(dt=dt_next)
             # 2.2 find next detections:
             # self.drawDsearchRegionAroundDetection(x_t, S1, S2, t.theta)
-            next_coords, next_probs = self.collectWithin(d_pred.t, d_current) # collect in next frame (t+1)
+            next_dets, next_probs = self.collectWithin(d_pred.t, d_current) # collect in next frame (t+1)
 
-            # [TODO] -> add collected points to trajectory for score calculation
-            # 
-            # 
-            # ------------
+            # add detections (objects, not just coords) to trajectory set (for intersections with other trajectories)
+            t.D.update(next_dets)
 
-            if(len(next_coords) == 0):
+            if(len(next_dets) == 0):
                 n_holes += 1
                 n_holes_total += 1
                 print("empty")
@@ -406,7 +435,7 @@ class DetectionSpace:
 
             # 3. estimate next detection: weighted mean of detections
             # d_next, _ = self.estimateNext(t)
-            d_next, _ = self.estimateNext2(d_current,d_pred,next_coords,next_probs,t.theta)
+            d_next, _ = self.estimateNext2(d_current,d_pred,next_dets,next_probs,t.theta, dt=dt_next)
             # self.drawX(d_next.x,1.0)
             self.drawLine(x_t, d_next.x, 0.4)
             # self.drawX(d_p.x, 0.8)
@@ -420,7 +449,9 @@ class DetectionSpace:
             # t.theta = 0
             # repeat loop
         
-        # [TODO] - add trajectory to array of trajectories
+        self.TR.append(t)
+        print(t.D)
+        print(self.TR)
     
 
     def buildQPBMatrix():
@@ -433,10 +464,11 @@ class Trajectory:
     # Hi_ti -> if there is only one detection inside of event cone when building trajectory, then this is used as Hi_ti
     # if there are more, then the one with maximum probability (according to Dt (is defined by trajectory point)) is selected
     # (could probably also use weighted average / average / random / build hypotheses for all of them (hard??)) --> discussion is needed
+    Tid = 0 # apparently static? (want private static)
 
     def __init__(self, d0):
-        self.id = Tid # unique id of the trajectory
-        Tid = Tid+1
+        self.id = Trajectory.Tid # unique id of the trajectory
+        Trajectory.Tid = Trajectory.Tid+1
         self.v = 0 # initial velocity is 0
         self.theta = 0 # theta is also 0
         self.X = [d0] # trajectory points (detections)
@@ -447,13 +479,19 @@ class Trajectory:
     def estimateNext(self, dt = 1) -> Detection:
         x = self.X[-1].x
         t = self.X[-1].t
+        # print(t)
         # print(self.X)
         # print(self.theta)
         # print(self.v)
         x_t1 = x[0] + int(dt*self.v*math.cos(self.theta))
         y_t1 = x[1] + int(dt*self.v*math.sin(self.theta))
         return Detection((x_t1, y_t1), self.v, t+dt, self.theta)
-        
+    
+    def __str__(self):
+        return "{t"+str(self.id)+", len="+str(len(self.X))+"}"
+
+    def __repr__(self):
+        return self.__str__()
                 
         
 
@@ -514,27 +552,27 @@ def main():
     seed = 42
     
     # D = coords2det2(t1)
-    D = coords2det2(t1)
-    D2 = coords2det2(t3)
+    D = coords2det2(t4)
 
-    offset = 5
-    for i in range(len(D2)):
-        for j in range(len(D2[i])):
-            D2[i][j].t = i+offset # lval + assignment: mem = mov
-            D[i+offset].append(D2[i][j])
 
-    
     # create detection space object:
     dspace = DetectionSpace(n)
     dspace.D = D
 
-    d0 = D[0][0]
+    d0 = D[5][0]
     # print(d0)
-    d0_1 = D2[0][0]
+
+    d1,d2 = D[3][0],D[3][1]
+
+    
     th1 = Trajectory(d0)
-    th2 = Trajectory(d0_1)
+    
+    
+
+    
     dspace.buildTrajectory(th1)
-    dspace.buildTrajectory(th2)
+    
+    
 
     # dspace.drawLine((10,10), (100,70))
     # dspace.drawX([235,430], 1)
@@ -545,6 +583,39 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# def main():
+#     n = 500 # canvas size
+#     seed = 42
+    
+#     # D = coords2det2(t1)
+#     D = coords2det2(t1)
+#     D2 = coords2det2(t3)
+
+#     offset = 5
+#     for i in range(len(D2)):
+#         for j in range(len(D2[i])):
+#             D2[i][j].t = i+offset # lval + assignment: mem = mov
+#             D[i+offset].append(D2[i][j])
+
+    
+#     # create detection space object:
+#     dspace = DetectionSpace(n)
+#     dspace.D = D
+
+#     d0 = D[0][0]
+#     # print(d0)
+#     d0_1 = D2[0][0]
+#     th1 = Trajectory(d0)
+#     th2 = Trajectory(d0_1)
+#     dspace.buildTrajectory(th1)
+#     dspace.buildTrajectory(th2)
+
+#     # dspace.drawLine((10,10), (100,70))
+#     # dspace.drawX([235,430], 1)
+    
+#     dspace.showSpace()
+
 
 
 # backup

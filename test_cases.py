@@ -64,7 +64,8 @@ def main():
     n = 500
     canv = np.zeros((n,n))
     window_name = "abc"
-    im = cv.imread("images/t_n_wo.png", cv.IMREAD_GRAYSCALE)
+    # im = cv.imread("images/t_n_wo.png", cv.IMREAD_GRAYSCALE)
+    im = cv.imread("images/t3_1.png", cv.IMREAD_GRAYSCALE)
 
     X = []
     
@@ -86,10 +87,8 @@ def main():
     print(canv[122,52])
     
     gray=[
-(265, 135),
-(266, 135),
-(266, 136),
-(266, 137),
+(238, 221),
+(242, 226),
 
     ]
 

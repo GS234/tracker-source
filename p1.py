@@ -108,7 +108,7 @@ def coords2det2(X):
         det_arr = []
         
         for x in x_t:
-            det_arr.append(Detection(x,0,i,0))
+            det_arr.append(Detection(x,i))
         detections.append(det_arr)
         i = i+1
     return detections
@@ -119,11 +119,9 @@ def coords2det2(X):
 # detection class; if becomes too complicated, move it to other file
 class Detection:
     # constructor: position, velocity, timestamp (position, velocity are only used for visualization and legacy reasons)
-    def __init__(self, x, v = 0, t=0, theta=0):
+    def __init__(self, x, t=0):
         self.x = np.array(x)
-        self.v = v #initial velocity is 0
         self.t = t #time stamp
-        self.theta = theta
 
     def __str__(self):
         # return "d{x="+str(self.x)+",v="+str(self.v)+",t="+str(self.t)+",theta="+str(self.theta)+"}"
@@ -131,6 +129,17 @@ class Detection:
     
     def __repr__(self):
         return self.__str__()
+
+# detection of trajectory (also has theta, velocity)
+class TDet(Detection):
+    def __init__(self, x, t=0, v=0, theta=0):
+        super().__init__(x, t)
+        self.v=v
+        self.theta = theta
+    
+    def __str__(self):
+        return "td{x="+str(self.x)+",t="+str(self.t)+",v="+str(self.v)+",theta="+str(self.theta)+"}"
+    
 
 
 # detection space
@@ -213,16 +222,17 @@ class DetectionSpace:
     
     # collects detections within search region at time t
     # returns: DETECTIONS (has changed from coordinates, as we need those objects for trajectories), their probabilities
-    def collectWithin(self, t, d: Detection):
+    def collectWithin(self, t, td: TDet):
         # search among detections in next time moment (next frame, that is (whichever, usually immediate successor (dt = 1)))
         next_detections = [] # store 'em in list
         next_detections_probs = [] # weights: sampled from distribution (bivariate normal dist, see Detection.getProb())
-        
+        # print(self.D)
+        # print(t)
         if(t < len(self.D) and t >= 0): # check only if has detections in this layer (and not before 0 (negative indices overflow))
             for d_i in self.D[t]:
-                if(self.isWithin(d_i.x, d.x)):
+                if(self.isWithin(d_i.x, td.x)):
                     next_detections.append(d_i) # store detections, for now
-                    next_detections_probs.append(self.getProb(d_i.x, d.x)) # get probability score from nearby point
+                    next_detections_probs.append(self.getProb(d_i.x, td.x)) # get probability score from nearby point
         
         return next_detections, next_detections_probs
         
@@ -236,8 +246,8 @@ class DetectionSpace:
     # estimate next point in trajectory
     # input: last detection (for reference: estimate velocity, ...), predicted position, collected detections and their probabilities
     # output: estimated detection
-    def estimateNext2(self, d_last: Detection, d_predicted: Detection, next_detections, next_detections_probs, theta=0, dt=1) -> Detection:
-        x_p = d_predicted # predicted detection
+    def estimateNext2(self, d_last: TDet, d_pred: TDet, next_detections, next_detections_probs, dt=1) -> TDet:
+        x_p = d_pred # predicted detection
         x_t = d_last # last detection in trajectory
         t_i1 = x_t.t+dt # next time
 
@@ -272,7 +282,7 @@ class DetectionSpace:
         if(x_dif[1] < 0): # same angle is computed for both sides, because we only compare magnitude, so correction is needed in some cases
             theta_t1 = -theta_t1
         
-        d_t1 = Detection(x_t1,v_t1,t_i1,theta_t1) # next detection, it should probably be something else
+        d_t1 = TDet(x_t1,t_i1,v_t1,theta_t1) # next detection, it should probably be something else
         return (d_t1,x_p)
 
 
@@ -328,7 +338,7 @@ class DetectionSpace:
         if(x_dif[1] < 0): # same angle is computed for both sides, because we only compare magnitude, so correction is needed in some cases
             theta_t1 = -theta_t1
         
-        d_t1 = Detection(x_t1,v_t1,t_i1,theta_t1) # next detection, it should probably be something else
+        d_t1 = TDet(x_t1,t_i1,v_t1,theta_t1) # next detection, it should probably be something else
         # return x_t1
         return (d_t1,x_p)
     
@@ -364,7 +374,7 @@ class DetectionSpace:
         p_list = [(x[0], x[1]) for x in x_shape]
         coords2map(p_list, self.map, brightness=brightness)
     
-    def drawLine(self, x1, x2, brightness=1):
+    def drawLine(self, x1, x2, brightness: float = 1):
         x1 = np.array(x1)
         x2 = np.array(x2)
         n = (x2 - x1) # normal from x1 to x2
@@ -381,7 +391,6 @@ class DetectionSpace:
         coords2map(p_list, self.map, brightness, overwrite=False)
 
 
-
     # should be used for visualization only, is slow (O( (2*max(S1, S2)) ^2))
     def drawProbDistAroundDetection(self, x):
         # draw probability distribution function within detection area:
@@ -393,68 +402,10 @@ class DetectionSpace:
                     self.map[i][j] = prob
     
     
+    # ------------------------------
     
-    # POMEMBNO!!
-    # method takes the trajectory and builds it
-    # [TODO] - finish (should build trajectory in both ways)
-    def buildTrajectory(self, t: Trajectory):
-        t_n = len(self.D)
-        n_holes_total = 0 # skupno stevilo lukenj
-        n_holes = 0 # stevilo zaporednih lukenj
-        n_holes_max = 5 # najvecje steivlo zaporednih lukenj
-        
-        dt_next = 1
-        dt_prev = -1
-
-        for i in range(t_n):
-            # 1. detection
-            d_current = t.X[-1]
-            x_t = d_current.x # current point in trajectory (last in array)
-
-            # 2. look for next detections (current v, theta) (calculate estimation, look for detections inside its region)
-            # 2.1 estimate next point:
-            # d_pred = t.estimateNext(-1)
-            d_pred = t.estimateNext(dt=dt_next)
-            # 2.2 find next detections:
-            # self.drawDsearchRegionAroundDetection(x_t, S1, S2, t.theta)
-            next_dets, next_probs = self.collectWithin(d_pred.t, d_current) # collect in next frame (t+1)
-
-            # add detections (objects, not just coords) to trajectory set (for intersections with other trajectories)
-            t.D.update(next_dets)
-
-            if(len(next_dets) == 0):
-                n_holes += 1
-                n_holes_total += 1
-                print("empty")
-                if(n_holes >= n_holes_max):
-                    t.holes = n_holes_total
-                    print("maximum no. of sequential holes reached, ending trajectory")
-                    break
-            else:
-                n_holes = 0
-
-            # 3. estimate next detection: weighted mean of detections
-            # d_next, _ = self.estimateNext(t)
-            d_next, _ = self.estimateNext2(d_current,d_pred,next_dets,next_probs,t.theta, dt=dt_next)
-            # self.drawX(d_next.x,1.0)
-            self.drawLine(x_t, d_next.x, 0.4)
-            # self.drawX(d_p.x, 0.8)
-            # print(d_next)
-            # print(d_next)
-
-            # 4. add calculated estimate to trajectory
-            t.X.append(d_next)
-            t.v = d_next.v
-            t.theta = d_next.theta
-            # t.theta = 0
-            # repeat loop
-        
-        self.TR.append(t)
-        print(t.D)
-        print(self.TR)
-    
-
-    def buildQPBMatrix():
+    # method builds trajectory interatction matrix
+    def buildQBPMatrix():
         # [TODO] - for every trajectory, calculate qii, qij
         pass
         
@@ -464,28 +415,100 @@ class Trajectory:
     # Hi_ti -> if there is only one detection inside of event cone when building trajectory, then this is used as Hi_ti
     # if there are more, then the one with maximum probability (according to Dt (is defined by trajectory point)) is selected
     # (could probably also use weighted average / average / random / build hypotheses for all of them (hard??)) --> discussion is needed
-    Tid = 0 # apparently static? (want private static)
+    Tid = 0 # apparently static? (want private static, maybe should be _Tid)
 
-    def __init__(self, d0):
+    def __init__(self, d0: Detection, detectionSpace: DetectionSpace):
         self.id = Trajectory.Tid # unique id of the trajectory
+        self.origin = TDet(d0.x,d0.t,0,0)
+        self.detectionSpace = detectionSpace # pointer to detection space in which trajectory lives (has detections)
         Trajectory.Tid = Trajectory.Tid+1
-        self.v = 0 # initial velocity is 0
-        self.theta = 0 # theta is also 0
-        self.X = [d0] # trajectory points (detections)
+        self.X = [ ] # trajectory points ("trajectory" detections)
         self.holes = 0 # counter to count how many trajectory points have been added considering only estimate of next detection
         self.S = 0 # score/support of the trajectory
         self.D = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
 
-    def estimateNext(self, dt = 1) -> Detection:
-        x = self.X[-1].x
-        t = self.X[-1].t
-        # print(t)
-        # print(self.X)
-        # print(self.theta)
-        # print(self.v)
-        x_t1 = x[0] + int(dt*self.v*math.cos(self.theta))
-        y_t1 = x[1] + int(dt*self.v*math.sin(self.theta))
-        return Detection((x_t1, y_t1), self.v, t+dt, self.theta)
+    # method estimates next position based on current position, velocity and orientation (theta)
+    def estimateNext(self, td_current: TDet, dt = 1) -> Detection:
+        x = td_current.x
+        t = td_current.t
+        x_t1 = x[0] + int(dt*td_current.v*math.cos(td_current.theta))
+        y_t1 = x[1] + int(dt*td_current.v*math.sin(td_current.theta))
+        return TDet((x_t1, y_t1), t+dt, td_current.v, td_current.theta)
+    
+    # method builds trajectory and returns list of trajectory detections (and holes)
+    # [TODO] - is it really necessary to predict positions in the future? maybe only in the past?
+    def connectPoints(self, td_orig: TDet, dt=1) -> list:
+        t_n = len(self.detectionSpace.D)
+        n_holes_total = 0 # skupno stevilo lukenj
+        n_holes = 0 # stevilo zaporednih lukenj
+        n_holes_max = 5 # najvecje steivlo zaporednih lukenj
+
+        td_connected = [] # list of connected trajectory detections
+        
+        td_current = td_orig
+        for i in range(t_n):
+            # 1. detection
+            # td_current
+
+            # 2. look for next detections (current v, theta) (calculate estimation, look for detections inside its region)
+            # 2.1 estimate next point:
+            td_pred = self.estimateNext(td_current, dt)
+            # 2.2 find next detections:
+            next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1)
+
+            # add detections (objects, not just coords) to trajectory set (for intersections with other trajectories)
+            self.D.update(next_dets)
+
+            if(len(next_dets) == 0):
+                n_holes += 1
+                n_holes_total += 1
+                # print("empty")
+                if(n_holes >= n_holes_max):
+                    self.holes = n_holes_total
+                    # print("maximum no. of sequential holes reached, ending trajectory")
+                    break
+            else:
+                n_holes = 0
+
+            # 3. estimate next detection: weighted mean of detections
+            # d_next, _ = self.estimateNext(t)
+            td_next, _ = self.detectionSpace.estimateNext2(td_current, td_pred, next_dets, next_probs, dt=dt)
+            
+            # 4. add calculated estimate to list
+            td_connected.append(td_next)
+            td_current = td_next # update current point (i = i+1, p = p.next() <- neki tazga)
+            # repeat loop
+        return td_connected
+    
+    # metod builds trajectory from origin point
+    def build(self):
+        # [previous time frames] [self.origin] [next time frames]
+        t_prev = self.connectPoints(self.origin, -1) # previous detections
+        # print(t_prev)
+        t_next = self.connectPoints(self.origin, 1) # next detections
+
+        for i in range(len(t_prev)-1, 0, -1):
+            self.X.append(t_prev[i])
+        
+        self.X.append(self.origin)
+
+        for i in range(len(t_next)):
+            self.X.append(t_next[i])
+        
+        pass
+
+    # method draws trajectory to detection space
+    def drawToSpace(self):
+        x_brightness = 1.0
+        if(len(self.X) > 0): # if has one
+            self.detectionSpace.drawX(self.X[0].x, x_brightness)
+        if(len(self.X) > 1): # if has many
+            for i in range(len(self.X)-1):
+                xi = self.X[i].x
+                xi1 = self.X[i+1].x
+                self.detectionSpace.drawLine(xi,xi1,0.5)
+            self.detectionSpace.drawX(self.X[-1].x, x_brightness)
+        
     
     def __str__(self):
         return "{t"+str(self.id)+", len="+str(len(self.X))+"}"
@@ -565,15 +588,10 @@ def main():
     d1,d2 = D[3][0],D[3][1]
 
     
-    th1 = Trajectory(d0)
+    th1 = Trajectory(d0, dspace)
+    th1.build()
+    th1.drawToSpace()
     
-    
-
-    
-    dspace.buildTrajectory(th1)
-    
-    
-
     # dspace.drawLine((10,10), (100,70))
     # dspace.drawX([235,430], 1)
     
@@ -667,3 +685,60 @@ if __name__ == "__main__":
 #         d_t1 = Detection(x_t1,v_t1,t_i1,theta_t1) # next detection, it should probably be something else
 #         # return x_t1
 #         return (d_t1,x_p)
+
+# backup: buildTrajectory
+# def buildTrajectory(self, t: Trajectory, dt=1):
+#         t_n = len(self.D)
+#         n_holes_total = 0 # skupno stevilo lukenj
+#         n_holes = 0 # stevilo zaporednih lukenj
+#         n_holes_max = 5 # najvecje steivlo zaporednih lukenj
+        
+#         dt_next = 1
+#         dt_prev = -1
+
+#         for i in range(t_n):
+#             # 1. detection
+#             d_current = t.X[-1] #take last/first                                                                                <-
+#             x_t = d_current.x # current point in trajectory (last in array)
+
+#             # 2. look for next detections (current v, theta) (calculate estimation, look for detections inside its region)
+#             # 2.1 estimate next point:
+#             # d_pred = t.estimateNext(-1)
+#             d_pred = t.estimateNext(dt=dt_next)
+#             # 2.2 find next detections:
+#             # self.drawDsearchRegionAroundDetection(x_t, S1, S2, t.theta)
+#             next_dets, next_probs = self.collectWithin(d_pred.t, d_current) # collect in next frame (t+1)
+
+#             # add detections (objects, not just coords) to trajectory set (for intersections with other trajectories)
+#             t.D.update(next_dets)
+
+#             if(len(next_dets) == 0):
+#                 n_holes += 1
+#                 n_holes_total += 1
+#                 # print("empty")
+#                 if(n_holes >= n_holes_max):
+#                     t.holes = n_holes_total
+#                     # print("maximum no. of sequential holes reached, ending trajectory")
+#                     break
+#             else:
+#                 n_holes = 0
+
+#             # 3. estimate next detection: weighted mean of detections
+#             # d_next, _ = self.estimateNext(t)
+#             d_next, _ = self.estimateNext2(d_current,d_pred,next_dets,next_probs,t.theta, dt=dt_next)
+#             # self.drawX(d_next.x,1.0)
+#             self.drawLine(x_t, d_next.x, 0.4)
+#             # self.drawX(d_p.x, 0.8)
+#             # print(d_next)
+#             # print(d_next)
+
+#             # 4. add calculated estimate to trajectory
+#             t.X.append(d_next)                                                                                                  #<-
+#             t.v = d_next.v
+#             t.theta = d_next.theta
+#             # t.theta = 0
+#             # repeat loop
+        
+#         self.TR.append(t)
+#         # print(t.D)
+#         # print(self.TR)

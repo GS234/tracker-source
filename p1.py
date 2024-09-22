@@ -437,6 +437,7 @@ class Trajectory:
     
     # method builds trajectory and returns list of trajectory detections (and holes)
     # [TODO] - is it really necessary to predict positions in the future? maybe only in the past?
+    # HOLES: allow up to n holes, if no detections after n frames, discontinue (also delete all predictions)
     def connectPoints(self, td_orig: TDet, dt=1) -> list:
         t_n = len(self.detectionSpace.D)
         n_holes_total = 0 # skupno stevilo lukenj
@@ -465,6 +466,8 @@ class Trajectory:
                 # print("empty")
                 if(n_holes >= n_holes_max):
                     self.holes = n_holes_total
+                    for _ in range(n_holes_max-1):
+                        td_connected.pop()
                     # print("maximum no. of sequential holes reached, ending trajectory")
                     break
             else:
@@ -495,7 +498,6 @@ class Trajectory:
         for i in range(len(t_next)):
             self.X.append(t_next[i])
         
-        pass
 
     # method draws trajectory to detection space
     def drawToSpace(self):
@@ -508,6 +510,23 @@ class Trajectory:
                 xi1 = self.X[i+1].x
                 self.detectionSpace.drawLine(xi,xi1,0.5)
             self.detectionSpace.drawX(self.X[-1].x, x_brightness)
+    
+    # method calculates support of this trajectory (sum of probabilities of trajectory points)
+    # [TODO] - 
+    def calculateSupport(self):
+        # self.detectionSpace.drawDsearchRegionAroundDetection()
+        # go over all points in this trajectory, add to support
+        for td in self.X:
+            print(td)
+            self.detectionSpace.drawDsearchRegionAroundDetection(td.x, theta=td.theta) # visualization
+            dets, probs = self.detectionSpace.collectWithin(td.t, td)
+
+            if(len(probs) != 0):
+                pass
+                
+            
+            # self.detectionSpace.drawProbDistAroundDetection(td.x)
+
         
     
     def __str__(self):
@@ -585,12 +604,13 @@ def main():
     d0 = D[5][0]
     # print(d0)
 
-    d1,d2 = D[3][0],D[3][1]
+    # d1,d2 = D[3][0],D[3][1]
 
     
     th1 = Trajectory(d0, dspace)
     th1.build()
     th1.drawToSpace()
+    th1.calculateSupport()
     
     # dspace.drawLine((10,10), (100,70))
     # dspace.drawX([235,430], 1)

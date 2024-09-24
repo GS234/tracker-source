@@ -439,7 +439,7 @@ class DetectionSpace:
             q_ii = q_ii + S_err
             
             # 2. add holes (S_model)
-            q_ii = q_ii + tr.holes
+            q_ii = q_ii + e1*tr.holes
 
             Q_ii.append(q_ii)
 
@@ -488,14 +488,35 @@ class DetectionSpace:
                 n = n+1
             m = m+1
 
-        print(Q)
-        # return Q
+        # print(Q)
+        return Q
     
 
     # method solves qbp (returns list of selected hypotheses)
     # [TODO]
     def solveQBP(self, Q):
-        pass
+        # 1. init indicator vector
+        m, n = np.shape(Q)
+
+        v = np.zeros((m,1))
+        incIndVec(v, rev=True) # start with 1 selected, not with 0
+        
+
+        # 2. find maximum by calculating all possible combinations (brute force method, should try something else in the future - [TODO])
+        maximum = 0
+        max_v = 1
+        for i in range((1<<(m))-1):
+            current = np.dot(np.dot(v.T, Q), v)
+            print(current, end="", flush=True)
+            if(current > maximum):
+                maximum = current
+                max_v = i+1
+            incIndVec(v, rev=True)
+        print("\n")
+        
+        print(maximum)
+        print(max_v)
+        return max_v
 
 
         
@@ -723,6 +744,25 @@ def detSet2map(dets: set[Detection]):
             detMap[d.t] = [d]
     return detMap
 
+def incIndVec(vec: list[int], rev=False):
+    c = 1
+    n = len(vec)
+
+    rev_i = 1
+    if(rev):
+        rev_i = 0
+
+    for i in range(n):
+        # i_i = rev_i*(n-1-i) + (1-rev_i)*i # branchless
+        i_i = rev_i*(n-1-(i<<1))+i # branchless optimized :)
+
+        vec[i_i] = vec[i_i] + c
+        if(vec[i_i] == 2):
+            vec[i_i] = 0
+            c = 1
+        else:
+            break
+
 
 
 
@@ -760,6 +800,7 @@ def main():
     d0 = D[3][0]
     d1 = D[3][1]
     d2 = D[3][2]
+    d3 = D[0][0]
     # print(d0)
 
     # d1,d2 = D[3][0],D[3][1]
@@ -776,6 +817,10 @@ def main():
     th3 = Trajectory(d2, dspace)
     th3.build()
     th3.drawToSpace()
+    
+    th4 = Trajectory(d3, dspace)
+    th4.build()
+    th4.drawToSpace()
 
     # detIntersect = th1.D & th2.D
     # print(detIntersect)
@@ -783,13 +828,26 @@ def main():
     # print(detIntMap)
 
 
-    dspace.buildQBPMatrix([th1, th2, th3])
+    Q = dspace.buildQBPMatrix([th4, th1, th2, th3], 0.5, 0.1)
+    # Q = dspace.buildQBPMatrix([th1, th4], 0.1, 0.001)
+    print("Q:\n", Q)
+    dspace.solveQBP(Q)
+
+    # [TODO] - fix calculation of trajectory scores
     
     
     # dspace.drawLine((10,10), (100,70))
     # dspace.drawX([235,430], 1)
     
-    dspace.showSpace()
+    # dspace.showSpace()
+
+    # v = np.zeros(8)
+    # for i in range(257):
+    #     print(v)
+    #     incIndVec(v)
+
+
+
 
 # -----------
 

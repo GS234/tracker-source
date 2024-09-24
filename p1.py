@@ -82,7 +82,7 @@ t3 = [
 
 t2 = [
     [(250,249)],
-    # [(240,240),(260,240)]
+    [(240,240),(260,240)],
     [(240,240),(260,240),(253,240),(256,240)]
 ]
 
@@ -90,7 +90,7 @@ t4 = [
 [(262, 201)],
 [(254, 206)],
 [(247, 215)],
-[(238, 221),(242, 226)],
+[(238, 221),(242, 226),(230, 210)],
 [(229, 233)],
 [(219, 245)],
 [(207, 253)],
@@ -138,7 +138,8 @@ class TDet(Detection):
         self.theta = theta
     
     def __str__(self):
-        return "td{x="+str(self.x)+",t="+str(self.t)+",v="+str(self.v)+",theta="+str(self.theta)+"}"
+        # return "td{x="+str(self.x)+",t="+str(self.t)+",v="+str(self.v)+",theta="+str(self.theta)+"}"
+        return "td{x="+str(self.x)+",t="+str(self.t)+"}"
     
 
 
@@ -207,6 +208,19 @@ class DetectionSpace:
         pi_2, cov_mat_det = 2*np.pi , 9*a*b
         # return (1.0 / (np.sqrt( pi_2*pi_2 * cov_mat_det))) * np.exp(-0.5* np.dot( np.dot(v, inv_cov_mat), v)) # probability
         return np.exp(-0.5* np.dot( np.dot(v, inv_cov_mat), v)) # score (unscaled prob) (za vizualizacijo)
+    
+    # probability dist. around trajectory detection (also uses velocity and orientation)
+    # [TODO] - stretch it according to velocity
+    def getProb2(self, d:Detection, td:TDet, a=S1, b=S2) -> float:
+        inv_cov_mat = np.array([[1.0/(3*a),0.0],[0.0,1.0/(3*b)]])
+        
+        rot_mat = self.getRotationMatrix(theta=td.theta)
+        v = d.x - td.x # x - mu
+        v = np.dot(rot_mat.T, v) #un-rotate, so that it can be evaluated over un-rotated distribution
+
+        pi_2, cov_mat_det = 2*np.pi , 9*a*b
+        # return (1.0 / (np.sqrt( pi_2*pi_2 * cov_mat_det))) * np.exp(-0.5* np.dot( np.dot(v, inv_cov_mat), v)) # probability
+        return np.exp(-0.5* np.dot( np.dot(v, inv_cov_mat), v)) # score (unscaled prob) (za vizualizacijo)
     # ----------------------------------------------------------------------------------------
     
 
@@ -242,7 +256,7 @@ class DetectionSpace:
         # for i in range(n_det):
         #     next_detections_X[i] = next_detections[i].x
         # return next_detections_X, next_detections_probs
-    
+
     # estimate next point in trajectory
     # input: last detection (for reference: estimate velocity, ...), predicted position, collected detections and their probabilities
     # output: estimated detection
@@ -380,6 +394,8 @@ class DetectionSpace:
         n = (x2 - x1) # normal from x1 to x2
         # print(n.reshape( (2,1) ))
         n_len = np.sqrt(np.dot(n.T,n))
+        if(n_len == 0): # if the same point, no need to draw :)
+            return
         n = n/n_len
         n = n.reshape((2,1))
         
@@ -405,9 +421,83 @@ class DetectionSpace:
     # ------------------------------
     
     # method builds trajectory interatction matrix
-    def buildQBPMatrix():
+    # [TODO] - should be tested
+    def buildQBPMatrix(self, tr_list: list[Trajectory], e1: float = 1.0, e2: float = 1.0):
         # [TODO] - for every trajectory, calculate qii, qij
+        # 1. calculate q_ii terms ("merit terms")
+        Q_ii = []
+        for tr in tr_list:
+            q_ii = 0 # merit term
+            # calculate for every trajectory point in trajectory:
+            
+            S_err = 0
+            for td in tr.X:
+                g_k = tr.g(td.t) # throws indexOutOfBounds!
+                if(g_k is None):
+                    continue # do not add anything if has no detections (see method Trajectory.g(...))
+                S_err = S_err + ((1.0 + e2) + e2*g_k)
+            q_ii = q_ii + S_err
+            
+            # 2. add holes (S_model)
+            q_ii = q_ii + tr.holes
+
+            Q_ii.append(q_ii)
+
+        Q = np.diag(Q_ii) # make diagonal matrix
+        
+        
+        # 2. calculate q_ij terms (interaction terms (similar to q_ii, but only consider intersecting trajectory points))
+        n_tr = len(Q_ii)
+        m = 0 # row index
+        n = 0 # column index
+
+        # I miss good old for loops from java so much ...
+        while( m <= (n_tr-1)):
+            n = m+1
+            while( n <= (n_tr -1)):
+                # 1. get points in intersection
+
+                det_intersect = tr_list[m].D & tr_list[n].D
+                det_intersect_map = detSet2map(det_intersect)
+
+                # choose weaker hypothesis
+                tr_l = n
+                if(Q_ii[n] > Q_ii[m]):
+                    tr_l = m
+                tr_l = tr_list[tr_l]
+
+                # 2. calculate g of intersecting points (with D of the weaker hypothesis)
+
+                Q_ij = 0
+                for dets_i in det_intersect_map:
+                    dets = det_intersect_map[dets_i]
+                    # print(dets)
+                    # print(det_intersect_map)
+                    g_kl = tr_l.g_k(dets)
+                    if(g_kl is None): # handled case (see method g_k)
+                        continue
+                    # add to sum:
+                    Q_ij = Q_ij + ((1-e2) + e2*g_kl)
+
+                Q_ij = Q_ij * (-0.5)
+
+                # 3. set q_ij term (q_ij, q_ji)
+                
+                Q[m,n] = Q_ij
+                Q[n,m] = Q_ij
+                n = n+1
+            m = m+1
+
+        print(Q)
+        # return Q
+    
+
+    # method solves qbp (returns list of selected hypotheses)
+    # [TODO]
+    def solveQBP(self, Q):
         pass
+
+
         
 
 class Trajectory:
@@ -428,7 +518,7 @@ class Trajectory:
         self.D = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
 
     # method estimates next position based on current position, velocity and orientation (theta)
-    def estimateNext(self, td_current: TDet, dt = 1) -> Detection:
+    def estimateNext(self, td_current: TDet, dt: int = 1) -> Detection:
         x = td_current.x
         t = td_current.t
         x_t1 = x[0] + int(dt*td_current.v*math.cos(td_current.theta))
@@ -481,6 +571,15 @@ class Trajectory:
             td_connected.append(td_next)
             td_current = td_next # update current point (i = i+1, p = p.next() <- neki tazga)
             # repeat loop
+        
+        # prune predicted points in the future
+        # print("lukne: ",n_holes)
+        # print(td_connected)
+        if(len(td_connected) >= n_holes):
+            for _ in range(n_holes):
+                # if(len(td_connected) > 0):
+                td_connected.pop()
+
         return td_connected
     
     # metod builds trajectory from origin point
@@ -490,13 +589,14 @@ class Trajectory:
         # print(t_prev)
         t_next = self.connectPoints(self.origin, 1) # next detections
 
-        for i in range(len(t_prev)-1, 0, -1):
+        for i in range(len(t_prev)-1, -1, -1):
             self.X.append(t_prev[i])
         
         self.X.append(self.origin)
 
         for i in range(len(t_next)):
             self.X.append(t_next[i])
+        # print(self.X)
         
 
     # method draws trajectory to detection space
@@ -511,21 +611,54 @@ class Trajectory:
                 self.detectionSpace.drawLine(xi,xi1,0.5)
             self.detectionSpace.drawX(self.X[-1].x, x_brightness)
     
-    # method calculates support of this trajectory (sum of probabilities of trajectory points)
-    # [TODO] - 
-    def calculateSupport(self):
-        # self.detectionSpace.drawDsearchRegionAroundDetection()
-        # go over all points in this trajectory, add to support
-        for td in self.X:
-            print(td)
-            self.detectionSpace.drawDsearchRegionAroundDetection(td.x, theta=td.theta) # visualization
-            dets, probs = self.detectionSpace.collectWithin(td.t, td)
+    # POMEMBNO!! MOGOCE DELA NAROBE (klicemo iz build qbp matrix)
+    # method calculates CUMULATIVE "error" of ALL detections around estimated trajectory point in time t (is this ok?)
+    # [TODO] - is this ok? might not be
+    def g(self, t: int):
+        
+        # 1. find detections around trajectory point at time t
+        t_relative = t - self.X[0].t # need relative time, because trajectories might not start at time 0
+        td_t = self.X[t_relative]
+        dets, probs = self.detectionSpace.collectWithin(td_t.t, td_t)
+        
+        # 2. get each detection's probability in image (we get that from detector)
+        p_hi = 1
 
-            if(len(probs) != 0):
-                pass
-                
-            
-            # self.detectionSpace.drawProbDistAroundDetection(td.x)
+        # 3. calculate g:
+        #   option 1:  g = p*(Hk,tk|Itk) + SUM(a)[   log(p(Ha,tk|H))   ] -> cumulative log error of all detections around trajectory point at t
+        result = p_hi 
+        if(len(dets) == 0):
+            return None # we should not add anything to this, this case should be handled
+        
+        result = result + np.sum( np.log(probs) )
+        return result
+    
+
+    # method calculates g_k of detections in list (used for intersecting detections) ()
+    # [TODO] - (untested)
+    def g_k(self, dets: list[Detection]):
+        probs = self.getDetProbs(dets)
+        p_hi = 1
+        result = p_hi 
+        if(len(dets) == 0):
+            return None # this case should be handled
+        result = result + np.sum( np.log(probs) )
+        return result
+    
+    
+    # method gets probabilities of detections in list around corresponding trajectory point
+    # [TODO] - might need to test it if it works (untested)
+    def getDetProbs(self, det_list: list[Detection]):
+        t_off = self.X[0].t # time of first detection, is used to calculate relative index of point in trajectory
+        probs = []
+        for d in det_list:
+            td = self.X[d.t - t_off]
+            d_prob = self.detectionSpace.getProb2(d,td)
+            probs.append(d_prob)
+        return probs
+    
+    # POMEMBNO!!
+
 
         
     
@@ -581,10 +714,32 @@ def n_random_coords(n, N=1, seed=None):
     print(X)
     return list(zip(X[0],X[1]))
 
+def detSet2map(dets: set[Detection]):
+    detMap = {}
+    for d in dets:
+        try:
+            detMap[d.t].append(d)
+        except KeyError:
+            detMap[d.t] = [d]
+    return detMap
+
+
+
 
 
 # -------------------------
 
+# debug trajectory
+
+# total points: 4
+tdeb_1 = [
+    [(250,250)], # 0
+    [(255,255)], # 1
+    [(260,255),(265,260)], # 2
+    [(265,265)], # 3
+    [],
+    [(270,270)], # 4
+]
 
 
 
@@ -595,13 +750,16 @@ def main():
     
     # D = coords2det2(t1)
     D = coords2det2(t4)
+    # D = coords2det2(tdeb_1)
 
 
     # create detection space object:
     dspace = DetectionSpace(n)
     dspace.D = D
 
-    d0 = D[5][0]
+    d0 = D[3][0]
+    d1 = D[3][1]
+    d2 = D[3][2]
     # print(d0)
 
     # d1,d2 = D[3][0],D[3][1]
@@ -610,7 +768,23 @@ def main():
     th1 = Trajectory(d0, dspace)
     th1.build()
     th1.drawToSpace()
-    th1.calculateSupport()
+    
+    th2 = Trajectory(d1, dspace)
+    th2.build()
+    th2.drawToSpace()
+    
+    th3 = Trajectory(d2, dspace)
+    th3.build()
+    th3.drawToSpace()
+
+    # detIntersect = th1.D & th2.D
+    # print(detIntersect)
+    # detIntMap = detSet2map(detIntersect)
+    # print(detIntMap)
+
+
+    dspace.buildQBPMatrix([th1, th2, th3])
+    
     
     # dspace.drawLine((10,10), (100,70))
     # dspace.drawX([235,430], 1)

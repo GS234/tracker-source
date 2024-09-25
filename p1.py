@@ -422,9 +422,8 @@ class DetectionSpace:
     # ------------------------------
     
     # method builds trajectory interatction matrix
-    # [TODO] - should be tested
+    # [TODO] - should be tested, needs refactoring (move some things to separate methods)
     def buildQBPMatrix(self, tr_list: list[Trajectory], e1: float = 1.0, e2: float = 1.0):
-        # [TODO] - for every trajectory, calculate qii, qij
         # 1. calculate q_ii terms ("merit terms")
         Q_ii = []
         for tr in tr_list:
@@ -432,15 +431,17 @@ class DetectionSpace:
             # calculate for every trajectory point in trajectory:
             
             S_err = 0
+            # print("this is g: -->")
             for td in tr.X:
                 g_k = tr.g(td.t) # throws indexOutOfBounds!
                 if(g_k is None):
                     continue # do not add anything if has no detections (see method Trajectory.g(...))
-                S_err = S_err + ((1.0 + e2) + e2*g_k)
-            q_ii = q_ii + S_err
+                S_err = S_err + ((1.0 - e2) + e2*g_k)
+            # print("<-- this is end of g")
             
             # 2. add holes (S_model)
-            q_ii = q_ii + e1*tr.holes
+            q_ii = q_ii - e1*tr.holes + S_err
+            
 
             Q_ii.append(q_ii)
 
@@ -469,7 +470,9 @@ class DetectionSpace:
 
                 # 2. calculate g of intersecting points (with D of the weaker hypothesis)
 
-                Q_ij = 0
+                q_ij = 0
+                S_err = 0
+                # print("this is g_k: -->")
                 for dets_i in det_intersect_map:
                     dets = det_intersect_map[dets_i]
                     # print(det_intersect_map)
@@ -477,14 +480,15 @@ class DetectionSpace:
                     if(g_kl is None): # handled case (see method g_k)
                         continue
                     # add to sum:
-                    Q_ij = Q_ij + ((1-e2) + e2*g_kl)
+                    S_err = S_err + ((1-e2) + e2*g_kl)
+                # print("<-- end of g_k")
 
-                Q_ij = Q_ij * (-0.5)
+                q_ij = S_err * (-0.5)
 
                 # 3. set q_ij term (q_ij, q_ji)
                 
-                Q[m,n] = Q_ij
-                Q[n,m] = Q_ij
+                Q[m,n] = q_ij
+                Q[n,m] = q_ij
                 n = n+1
             m = m+1
 
@@ -493,7 +497,6 @@ class DetectionSpace:
     
 
     # method solves qbp (returns list of selected hypotheses)
-    # [TODO]
     def solveQBP(self, Q):
         # 1. init indicator vector
         m, n = np.shape(Q)
@@ -636,13 +639,14 @@ class Trajectory:
     # POMEMBNO!! MOGOCE DELA NAROBE (klicemo iz build qbp matrix)
     # method calculates CUMULATIVE "error" of ALL detections around estimated trajectory point in time t (is this ok?)
     # [TODO] - is this ok? might not be
+    # FUJ! - choose one of the following methods to calculate g and use only one everywhere, as they do essentially same thing
     def g(self, t: int):
         
         # 1. find detections around trajectory point at time t
         t_relative = t - self.X[0].t # need relative time, because trajectories might not start at time 0
         td_t = self.X[t_relative]
         dets, probs = self.detectionSpace.collectWithin(td_t.t, td_t)
-        
+
         # 2. get each detection's probability in image (we get that from detector)
         p_hi = 1
 
@@ -838,12 +842,10 @@ def main():
 
     # Q = dspace.buildQBPMatrix([th4, th1, th2, th3], 0.5, 0.1)
     # Q = dspace.buildQBPMatrix([th1, th4], 0.1, 0.001)
-    Q = dspace.buildQBPMatrix([td1, td1], 0., 1.)
+    Q = dspace.buildQBPMatrix([td1, td1], 1., 1.)
     # print("lukne: ",td1.holes)
     print("Q:\n", Q)
     dspace.solveQBP(Q)
-
-    # [TODO] - fix calculation of trajectory scores
     
     
     # dspace.drawLine((10,10), (100,70))

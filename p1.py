@@ -139,6 +139,7 @@ class TDet(Detection):
     
     def __str__(self):
         # return "td{x="+str(self.x)+",t="+str(self.t)+",v="+str(self.v)+",theta="+str(self.theta)+"}"
+        # return "td{x="+str(self.x)+",t="+str(self.t)+",v="+str(self.v)+"}"
         return "td{x="+str(self.x)+",t="+str(self.t)+"}"
     
 
@@ -471,7 +472,6 @@ class DetectionSpace:
                 Q_ij = 0
                 for dets_i in det_intersect_map:
                     dets = det_intersect_map[dets_i]
-                    # print(dets)
                     # print(det_intersect_map)
                     g_kl = tr_l.g_k(dets)
                     if(g_kl is None): # handled case (see method g_k)
@@ -539,7 +539,7 @@ class Trajectory:
         self.D = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
 
     # method estimates next position based on current position, velocity and orientation (theta)
-    def estimateNext(self, td_current: TDet, dt: int = 1) -> Detection:
+    def estimateNext(self, td_current: TDet, dt: int = 1) -> TDet:
         x = td_current.x
         t = td_current.t
         x_t1 = x[0] + int(dt*td_current.v*math.cos(td_current.theta))
@@ -565,21 +565,20 @@ class Trajectory:
             # 2. look for next detections (current v, theta) (calculate estimation, look for detections inside its region)
             # 2.1 estimate next point:
             td_pred = self.estimateNext(td_current, dt)
+            # print(td_pred.v)
             # 2.2 find next detections:
             next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1)
 
-            # add detections (objects, not just coords) to trajectory set (for intersections with other trajectories)
+            # add detections (objects, not just coords) to trajectory detections set (for intersections with other trajectories)
             self.D.update(next_dets)
 
-            if(len(next_dets) == 0):
+            if(len(next_dets) == 0): # either hole or discontinued
+                # print("lukna je naprej od: ",td_current.x)
                 n_holes += 1
                 n_holes_total += 1
                 # print("empty")
                 if(n_holes >= n_holes_max):
-                    self.holes = n_holes_total
-                    for _ in range(n_holes_max-1):
-                        td_connected.pop()
-                    # print("maximum no. of sequential holes reached, ending trajectory")
+                    n_holes = n_holes-1
                     break
             else:
                 n_holes = 0
@@ -595,12 +594,14 @@ class Trajectory:
         
         # prune predicted points in the future
         # print("lukne: ",n_holes)
-        # print(td_connected)
+        # print("td_with: ",td_connected, "holes: ", n_holes)
         if(len(td_connected) >= n_holes):
+            self.holes = n_holes_total - n_holes
             for _ in range(n_holes):
+                # print("brisem lukno")
                 # if(len(td_connected) > 0):
                 td_connected.pop()
-
+        # print("td_connected: " ,td_connected)
         return td_connected
     
     # metod builds trajectory from origin point
@@ -617,7 +618,7 @@ class Trajectory:
 
         for i in range(len(t_next)):
             self.X.append(t_next[i])
-        # print(self.X)
+        print(self.X)
         
 
     # method draws trajectory to detection space
@@ -672,8 +673,10 @@ class Trajectory:
     def getDetProbs(self, det_list: list[Detection]):
         t_off = self.X[0].t # time of first detection, is used to calculate relative index of point in trajectory
         probs = []
+        
         for d in det_list:
             td = self.X[d.t - t_off]
+            # print(td, det_list)
             d_prob = self.detectionSpace.getProb2(d,td)
             probs.append(d_prob)
         return probs
@@ -789,38 +792,39 @@ def main():
     seed = 42
     
     # D = coords2det2(t1)
-    D = coords2det2(t4)
-    # D = coords2det2(tdeb_1)
+    # D = coords2det2(t4)
+    D = coords2det2(tdeb_1)
 
 
     # create detection space object:
     dspace = DetectionSpace(n)
     dspace.D = D
 
-    d0 = D[3][0]
-    d1 = D[3][1]
-    d2 = D[3][2]
-    d3 = D[0][0]
+    # d0 = D[3][0]
+    # d1 = D[3][1]
+    # d2 = D[3][2]
+    # d3 = D[0][0]
     # print(d0)
+
+    dd0 = D[3][0]
 
     # d1,d2 = D[3][0],D[3][1]
 
+    # th1 = Trajectory(d0, dspace)
+    # th1.build()
+    # th1.drawToSpace()
     
-    th1 = Trajectory(d0, dspace)
-    th1.build()
-    th1.drawToSpace()
+    # th2 = Trajectory(d1, dspace)
+    # th2.build()
+    # th2.drawToSpace()
     
-    th2 = Trajectory(d1, dspace)
-    th2.build()
-    th2.drawToSpace()
+    # th3 = Trajectory(d2, dspace)
+    # th3.build()
+    # th3.drawToSpace()
     
-    th3 = Trajectory(d2, dspace)
-    th3.build()
-    th3.drawToSpace()
-    
-    th4 = Trajectory(d3, dspace)
-    th4.build()
-    th4.drawToSpace()
+    # th4 = Trajectory(d3, dspace)
+    # th4.build()
+    # th4.drawToSpace()
 
     # detIntersect = th1.D & th2.D
     # print(detIntersect)
@@ -828,8 +832,14 @@ def main():
     # print(detIntMap)
 
 
-    Q = dspace.buildQBPMatrix([th4, th1, th2, th3], 0.5, 0.1)
+    td1 = Trajectory(dd0, dspace)
+    td1.build()
+    td1.drawToSpace()
+
+    # Q = dspace.buildQBPMatrix([th4, th1, th2, th3], 0.5, 0.1)
     # Q = dspace.buildQBPMatrix([th1, th4], 0.1, 0.001)
+    Q = dspace.buildQBPMatrix([td1, td1], 0., 1.)
+    # print("lukne: ",td1.holes)
     print("Q:\n", Q)
     dspace.solveQBP(Q)
 
@@ -839,7 +849,7 @@ def main():
     # dspace.drawLine((10,10), (100,70))
     # dspace.drawX([235,430], 1)
     
-    # dspace.showSpace()
+    dspace.showSpace()
 
     # v = np.zeros(8)
     # for i in range(257):

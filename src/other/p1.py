@@ -1,3 +1,4 @@
+# last edited: 26. 9. 2024 - first version of working clustering with mdl and qbp
 from __future__ import annotations # da delajo tut type hint-i znotraj istega class-a
 import numpy as np
 import random
@@ -99,19 +100,6 @@ t4 = [
 [(193, 274)],
 [(182, 280)]
 ]
-
-
-def coords2det2(X):
-    detections = []
-    i = 0
-    for x_t in X:
-        det_arr = []
-        
-        for x in x_t:
-            det_arr.append(Detection(x,i))
-        detections.append(det_arr)
-        i = i+1
-    return detections
 
 # -----------------
 
@@ -687,9 +675,6 @@ class Trajectory:
     
     # POMEMBNO!!
 
-
-        
-    
     def __str__(self):
         return "{t"+str(self.id)+", len="+str(len(self.X))+"}"
 
@@ -702,6 +687,18 @@ class Trajectory:
 # takes list of tuples, returns list of detections
 def coords2detect(X):
     return [Detection(x) for x in X]
+
+def coords2det2(X):
+    detections = []
+    i = 0
+    for x_t in X:
+        det_arr = []
+        
+        for x in x_t:
+            det_arr.append(Detection(x,i))
+        detections.append(det_arr)
+        i = i+1
+    return detections
 
 def detections2map(D, map):
     n = np.shape(map)[0]
@@ -761,7 +758,7 @@ def incIndVec(vec: list[int], rev=False):
 
     for i in range(n):
         # i_i = rev_i*(n-1-i) + (1-rev_i)*i # branchless
-        i_i = rev_i*(n-1-(i<<1))+i # branchless optimized :)
+        i_i = rev_i*(n-1-(i<<1))+i # branchless, optimized :)
 
         vec[i_i] = vec[i_i] + c
         if(vec[i_i] == 2):
@@ -769,9 +766,6 @@ def incIndVec(vec: list[int], rev=False):
             c = 1
         else:
             break
-
-
-
 
 
 # -------------------------
@@ -796,38 +790,38 @@ def main():
     seed = 42
     
     # D = coords2det2(t1)
-    # D = coords2det2(t4)
-    D = coords2det2(tdeb_1)
+    D = coords2det2(t4)
+    # D = coords2det2(tdeb_1)
 
 
     # create detection space object:
     dspace = DetectionSpace(n)
     dspace.D = D
 
-    # d0 = D[3][0]
-    # d1 = D[3][1]
-    # d2 = D[3][2]
-    # d3 = D[0][0]
+    d0 = D[3][0]
+    d1 = D[3][1]
+    d2 = D[3][2]
+    d3 = D[0][0]
     # print(d0)
 
-    dd0 = D[3][0]
+    # dd0 = D[3][0]
 
     # d1,d2 = D[3][0],D[3][1]
 
-    # th1 = Trajectory(d0, dspace)
-    # th1.build()
-    # th1.drawToSpace()
+    th1 = Trajectory(d0, dspace)
+    th1.build()
+    th1.drawToSpace()
     
-    # th2 = Trajectory(d1, dspace)
-    # th2.build()
+    th2 = Trajectory(d1, dspace)
+    th2.build()
     # th2.drawToSpace()
     
-    # th3 = Trajectory(d2, dspace)
-    # th3.build()
+    th3 = Trajectory(d2, dspace)
+    th3.build()
     # th3.drawToSpace()
     
-    # th4 = Trajectory(d3, dspace)
-    # th4.build()
+    th4 = Trajectory(d3, dspace)
+    th4.build()
     # th4.drawToSpace()
 
     # detIntersect = th1.D & th2.D
@@ -836,13 +830,13 @@ def main():
     # print(detIntMap)
 
 
-    td1 = Trajectory(dd0, dspace)
-    td1.build()
-    td1.drawToSpace()
+    # td1 = Trajectory(dd0, dspace)
+    # td1.build()
+    # td1.drawToSpace()
 
-    # Q = dspace.buildQBPMatrix([th4, th1, th2, th3], 0.5, 0.1)
+    Q = dspace.buildQBPMatrix([th1, th2, th3, th4], 1.0, 1.0)
     # Q = dspace.buildQBPMatrix([th1, th4], 0.1, 0.001)
-    Q = dspace.buildQBPMatrix([td1, td1], 1., 1.)
+    # Q = dspace.buildQBPMatrix([td1, td1], 1., 1.)
     # print("lukne: ",td1.holes)
     print("Q:\n", Q)
     dspace.solveQBP(Q)

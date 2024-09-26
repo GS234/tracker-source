@@ -37,6 +37,7 @@ class Trajectory:
     # [TODO] - is it really necessary to predict positions in the future? maybe only in the past?
     # HOLES: allow up to n holes, if no detections after n frames, discontinue (also delete all predictions)
     def connectPoints(self, td_orig: TDet, dt=1) -> list:
+        print("this is connect points:")
         t_n = len(self.detectionSpace.D)
         n_holes_total = 0 # skupno stevilo lukenj
         n_holes = 0 # stevilo zaporednih lukenj
@@ -55,6 +56,9 @@ class Trajectory:
             # print(td_pred.v)
             # 2.2 find next detections:
             next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1)
+
+            print("current: ",td_current, "next dets: ", next_dets)
+
 
             # add detections (objects, not just coords) to trajectory detections set (for intersections with other trajectories)
             self.D.update(next_dets)
@@ -100,7 +104,7 @@ class Trajectory:
 
         for i in range(len(t_next)):
             self.X.append(t_next[i])
-        print(self.X)
+        # print(self.X)
         
 
     # method draws trajectory to detection space
@@ -113,6 +117,7 @@ class Trajectory:
                 xi = self.X[i].x
                 xi1 = self.X[i+1].x
                 self.detectionSpace.drawLine(xi,xi1,0.5)
+                # self.detectionSpace.drawDsearchRegionAroundDetection(xi1)
             self.detectionSpace.drawX(self.X[-1].x, x_brightness)
     
     # POMEMBNO!! MOGOCE DELA NAROBE (klicemo iz build qbp matrix)
@@ -125,6 +130,7 @@ class Trajectory:
         t_relative = t - self.X[0].t # need relative time, because trajectories might not start at time 0
         td_t = self.X[t_relative]
         dets, probs = self.detectionSpace.collectWithin(td_t.t, td_t)
+        print("current: ", td_t, "around: ", dets, probs)
 
         # 2. get each detection's probability in image (we get that from detector)
         p_hi = 1
@@ -143,6 +149,7 @@ class Trajectory:
     # [TODO] - (untested)
     def g_k(self, dets: list[Detection]):
         probs = self.getDetProbs(dets)
+        print(dets,probs)
         p_hi = 1
         result = p_hi 
         if(len(dets) == 0):
@@ -152,7 +159,7 @@ class Trajectory:
     
     
     # method gets probabilities of detections in list around corresponding trajectory point
-    # [TODO] - might need to test it if it works (untested)
+    # [TODO] - might need to test it if it works (untested) !!! -> debug it! 
     def getDetProbs(self, det_list: list[Detection]):
         t_off = self.X[0].t # time of first detection, is used to calculate relative index of point in trajectory
         probs = []

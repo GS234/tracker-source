@@ -7,7 +7,8 @@ from helper_func import * # helper functions
 
 
 # global vars:
-S1, S2 = 30,30 # default s1,s2
+S1, S2 = 15,15 # default s1,s2
+
 
 class DetectionSpace:
     def __init__(self, n, D: list = None):
@@ -230,6 +231,8 @@ class DetectionSpace:
         s1, s2 = S1,S2
         if((b is not None) and (a is not None)):
             s1,s2 = a,b
+        if(theta is None):
+            theta = 0
         bounds = self.getSearchRegionBounds(x,s1,s2, theta)
         coords2map(bounds, self.map, overwrite=False)
     
@@ -296,13 +299,13 @@ class DetectionSpace:
             # calculate for every trajectory point in trajectory:
             
             S_err = 0
-            # print("this is g: -->")
+            print("this is g: -->")
             for td in tr.X:
                 g_k = tr.g(td.t) # throws indexOutOfBounds!
                 if(g_k is None):
                     continue # do not add anything if has no detections (see method Trajectory.g(...))
                 S_err = S_err + ((1.0 - e2) + e2*g_k)
-            # print("<-- this is end of g")
+            print("<-- this is end of g")
             
             # 2. add holes (S_model)
             q_ii = q_ii - e1*tr.holes + S_err
@@ -337,7 +340,7 @@ class DetectionSpace:
 
                 q_ij = 0
                 S_err = 0
-                # print("this is g_k: -->")
+                print("this is g_k: -->")
                 for dets_i in det_intersect_map:
                     dets = det_intersect_map[dets_i]
                     # print(det_intersect_map)
@@ -346,7 +349,7 @@ class DetectionSpace:
                         continue
                     # add to sum:
                     S_err = S_err + ((1-e2) + e2*g_kl)
-                # print("<-- end of g_k")
+                print("<-- end of g_k")
 
                 q_ij = S_err * (-0.5)
 
@@ -375,13 +378,10 @@ class DetectionSpace:
         max_v = 1
         for i in range((1<<(m))-1):
             current = np.dot(np.dot(v.T, Q), v)
-            print(current, end="", flush=True)
+            # print(current, end="", flush=True)
             if(current > maximum):
                 maximum = current
                 max_v = i+1
             incIndVec(v, rev=True)
-        print("\n")
         
-        print(maximum)
-        print(max_v)
         return max_v

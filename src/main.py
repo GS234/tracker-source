@@ -124,80 +124,22 @@ t3_b = [
 # ---------------------
 
 # main:
-def main():
-    n = 500 # canvas size
-    seed = 42
-    
-    D = coords2det2(t3_b)
-
-    # create detection space object:
-    dspace = DetectionSpace(n)
-    dspace.D = D
-
-    d0 = D[0][1]
-    # d1 = D[1][0]
-
-    th1 = Trajectory(d0, dspace)
-    th1.build()
-    th1.drawToSpace()
-    
-    # th2 = Trajectory(d1, dspace)
-    # th2.build()
-    # th2.drawToSpace()
-    
-    # th3 = Trajectory(d2, dspace)
-    # th3.build()
-    # th3.drawToSpace()
-    
-    # th4 = Trajectory(d3, dspace)
-    # th4.build()
-    # # th4.drawToSpace()
-    # print(th1.X)
-
-
-    Q = dspace.buildQBPMatrix([th1, th1], 0.0, 1.0)
-    print("Q:\n", Q)
-    v = dspace.solveQBP(Q)
-    print(v)
-        
-    dspace.showSpace()
-
-
 # def main():
 #     n = 500 # canvas size
 #     seed = 42
     
 #     D = coords2det2(t3_b)
 
-#     det_list = []
-#     for dl in D:
-#         for d in dl:
-#             det_list.append(d)
-#     print(det_list)
-
 #     # create detection space object:
 #     dspace = DetectionSpace(n)
 #     dspace.D = D
 
-#     tr = []
+#     d0 = D[0][1]
+#     # d1 = D[1][0]
 
-#     for i in range(0,len(det_list)-15, 1):
-#         d = det_list[i]
-#         new_tr = Trajectory(d, dspace)
-#         new_tr.build()
-#         # new_tr.drawToSpace()
-#         tr.append(new_tr)
-
-
-
-#     # d0 = D[0][0]
-#     # d1 = D[0][1]
-#     # d2 = D[6][0]
-    
-
-#     # th1 = Trajectory(d0, dspace)
-#     # th1.build()
-#     # th1.drawToSpace()
+#     th1 = Trajectory(d0, dspace)
+#     th1.build()
+#     th1.drawToSpace()
     
 #     # th2 = Trajectory(d1, dspace)
 #     # th2.build()
@@ -210,27 +152,95 @@ def main():
 #     # th4 = Trajectory(d3, dspace)
 #     # th4.build()
 #     # # th4.drawToSpace()
+#     # print(th1.X)
 
 
-#     # Q = dspace.buildQBPMatrix([th1, th2, th3, th4], 1.0, 1.0)
-#     # Q = dspace.buildQBPMatrix([th1, th2], 1.0, 1.0)
-#     # Q = dspace.buildQBPMatrix([th1, th2, th3], 1.0, 1.0)
-#     # Q = dspace.buildQBPMatrix(tr, 1.0, 1.0)
-#     Q = dspace.buildQBPMatrix([tr[1],tr[3]], 1.0, 1.0)
+#     Q = dspace.buildQBPMatrix([th1, th1], 0.0, 1.0)
 #     print("Q:\n", Q)
 #     v = dspace.solveQBP(Q)
 #     print(v)
-    
-#     # vv = v
-#     # for i in range(len(tr)):
-#     #     if(vv % 2 != 0):
-#     #         tr[i].drawToSpace()
-#     #     vv = vv // 2
-#     tr[1].drawToSpace()
-#     # tr[2].drawToSpace()
-#     tr[3].drawToSpace()
-    
+        
 #     dspace.showSpace()
+
+
+def main():
+    n = 500 # canvas size
+    seed = 42
+    
+    D = coords2det2(t3_b)
+
+    det_list = []
+    for dl in D:
+        for d in dl:
+            det_list.append(d)
+    print(det_list)
+
+    # create detection space object:
+    dspace = DetectionSpace(n)
+    dspace.D = D
+
+    tr = []
+
+    for i in range(0,len(det_list)-15, 1):
+        d = det_list[i]
+        new_tr = Trajectory(d, dspace)
+        new_tr.build()
+        # new_tr.drawToSpace()
+        tr.append(new_tr)
+
+
+
+    # d0 = D[0][0]
+    # d1 = D[0][1]
+    # d2 = D[6][0]
+    
+
+    # th1 = Trajectory(d0, dspace)
+    # th1.build()
+    # th1.drawToSpace()
+    
+    # th2 = Trajectory(d1, dspace)
+    # th2.build()
+    # th2.drawToSpace()
+    
+    # th3 = Trajectory(d2, dspace)
+    # th3.build()
+    # th3.drawToSpace()
+    
+    # th4 = Trajectory(d3, dspace)
+    # th4.build()
+    # # th4.drawToSpace()
+
+
+    # Q = dspace.buildQBPMatrix([th1, th2, th3, th4], 1.0, 1.0)
+    # Q = dspace.buildQBPMatrix([th1, th2], 1.0, 1.0)
+    # Q = dspace.buildQBPMatrix([th1, th2, th3], 1.0, 1.0)
+    Q = dspace.buildQBPMatrix(tr, 1.0, 0.1)
+    # Q = dspace.buildQBPMatrix([tr[0],tr[1],tr[4],tr[5]], 0.0, 0.1)
+    # Q = dspace.buildQBPMatrix([tr[0], tr[4]], 0.0, 0.1)
+
+
+    # Q = dspace.buildQBPMatrix([tr[1],tr[3]], 1.0, 1.0)
+    
+    print("Q:\n", Q)
+    v = dspace.solveQBP(Q)
+    print(v)
+    
+    vv = v
+    for i in range(len(tr)):
+        if(vv % 2 != 0):
+            tr[i].drawToSpace()
+        vv = vv // 2
+    
+    # # tr[2].drawToSpace()
+    
+    # tr[0].drawToSpace()
+    # tr[1].drawToSpace()
+    
+    # tr[4].drawToSpace()
+    # tr[5].drawToSpace()
+    
+    dspace.showSpace()
 
 
 if __name__ == "__main__":

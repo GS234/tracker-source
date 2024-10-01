@@ -59,22 +59,39 @@ t1 = [
     [(204, 409)]
 ]
 
+t2 = [
+    [(168, 224), (262, 201)],
+[(179, 233), (254, 206)],
+[(188, 241), (247, 215)],
+[(195, 242), (238, 221),(242, 226)],
+[(203, 242), (229, 233)],
+
+[(209, 247), (219, 245)],
+[(217, 254), (207, 253)],
+
+[(225, 258), (202, 262)],
+[(232, 262), (198, 269)],
+[(238, 268), (193, 274)],
+[(249, 275), (182, 280)],
+[(263, 272)]
+]
+
 
 def main():
     n = 500
     canv = np.zeros((n,n))
     window_name = "abc"
     # im = cv.imread("images/t_n_wo.png", cv.IMREAD_GRAYSCALE)
-    im = cv.imread("../../images/t3_both.png", cv.IMREAD_GRAYSCALE)
+    # im = cv.imread("../../images/t3_both.png", cv.IMREAD_GRAYSCALE)
 
-    X = []
+    # X = []
     
-    h,w = np.shape(im)
-    for i in range(w):
-        for j in range(h):
-            if(im[j,i] > 0):
-                X.append((j,i))
-    print(X)
+    # h,w = np.shape(im)
+    # for i in range(w):
+    #     for j in range(h):
+    #         if(im[j,i] > 0):
+    #             X.append((j,i))
+    # print(X)
     # X.append((60,10))
     # X.append((240,10))
     # X.append((80, 439))
@@ -83,28 +100,38 @@ def main():
     
     
     
-    coords2map(X,canv, 1)
-    print(canv[122,52])
+    # coords2map(X,canv, 1)
+    # print(canv[122,52])
     
     gray=[
+        (168, 224), (262, 201),
+        (179, 233), (254, 206),
+        (188, 241), (247, 215),
+        (195, 242), (238, 221),(242, 226),
+        (203, 242), (229, 233),
         
+        (209, 247), (219, 245),
+        (217, 254), (207, 253),
         
-
-        (217, 254), (225, 258), (232, 262), (238, 268),  
-
-        
-
+        (225, 258), (202, 262),
+        (232, 262), (198, 269),
+        (238, 268), (193, 274),
+        (249, 275), (182, 280),
+        (263, 272)
     ]
 
 
     for g in gray:
-        canv[g] = 0.2
+        canv[g] = 1.0
 
 
-    cv.imshow(window_name, canv)
-    while cv.getWindowProperty(window_name, cv.WND_PROP_VISIBLE) >= 1:
-        cv.waitKey(1)
-    cv.destroyAllWindows()
+        cv.imshow(window_name, canv)
+        cv.waitKey(0)
+        
+
+    # while cv.getWindowProperty(window_name, cv.WND_PROP_VISIBLE) >= 1:
+    #     cv.waitKey(1)
+    # cv.destroyAllWindows()
 
 
 

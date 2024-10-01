@@ -102,7 +102,7 @@ class DetectionSpace:
     
     # collects detections within search region at time t
     # returns: DETECTIONS (has changed from coordinates, as we need those objects for trajectories), their probabilities
-    def collectWithin(self, t, td: TDet):
+    def collectWithin(self, t:int, td: TDet):
         # search among detections in next time moment (next frame, that is (whichever, usually immediate successor (dt = 1)))
         next_detections = [] # store 'em in list
         next_detections_probs = [] # weights: sampled from distribution (bivariate normal dist, see Detection.getProb())
@@ -299,13 +299,20 @@ class DetectionSpace:
             # calculate for every trajectory point in trajectory:
             
             S_err = 0
-            print("this is g: -->")
-            for td in tr.X:
-                g_k = tr.g(td.t) # throws indexOutOfBounds!
-                if(g_k is None):
-                    continue # do not add anything if has no detections (see method Trajectory.g(...))
+            # print("this is g: -->")
+            
+            dets_in_tr = tr.D # detections, that are part of trajectory (this is set)
+            dets_in_tr_map = detSet2map(dets_in_tr) # (this is map of ^)
+
+            for dets_i in dets_in_tr_map:
+                dets = dets_in_tr_map[dets_i]
+                g_k = tr.g_k(dets)
+                if(g_k is None): # handled case (see method g_k)
+                    continue
+                # add to sum:
                 S_err = S_err + ((1.0 - e2) + e2*g_k)
-            print("<-- this is end of g")
+
+            # print("<-- this is end of g")
             
             # 2. add holes (S_model)
             q_ii = q_ii - e1*tr.holes + S_err
@@ -340,7 +347,7 @@ class DetectionSpace:
 
                 q_ij = 0
                 S_err = 0
-                print("this is g_k: -->")
+                # print("this is g_k: -->")
                 for dets_i in det_intersect_map:
                     dets = det_intersect_map[dets_i]
                     # print(det_intersect_map)
@@ -349,7 +356,7 @@ class DetectionSpace:
                         continue
                     # add to sum:
                     S_err = S_err + ((1-e2) + e2*g_kl)
-                print("<-- end of g_k")
+                # print("<-- end of g_k")
 
                 q_ij = S_err * (-0.5)
 
@@ -378,6 +385,7 @@ class DetectionSpace:
         max_v = 1
         for i in range((1<<(m))-1):
             current = np.dot(np.dot(v.T, Q), v)
+            print(current)
             # print(current, end="", flush=True)
             if(current > maximum):
                 maximum = current

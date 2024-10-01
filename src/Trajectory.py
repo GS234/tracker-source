@@ -37,7 +37,7 @@ class Trajectory:
     # [TODO] - is it really necessary to predict positions in the future? maybe only in the past?
     # HOLES: allow up to n holes, if no detections after n frames, discontinue (also delete all predictions)
     def connectPoints(self, td_orig: TDet, dt=1) -> list:
-        print("this is connect points:")
+        # print("this is connect points:")
         t_n = len(self.detectionSpace.D)
         n_holes_total = 0 # skupno stevilo lukenj
         n_holes = 0 # stevilo zaporednih lukenj
@@ -57,7 +57,7 @@ class Trajectory:
             # 2.2 find next detections:
             next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1)
 
-            print("current: ",td_current, "next dets: ", next_dets)
+            # print("current: ",td_current, "next dets: ", next_dets) # debug stuff
 
 
             # add detections (objects, not just coords) to trajectory detections set (for intersections with other trajectories)
@@ -130,7 +130,7 @@ class Trajectory:
         t_relative = t - self.X[0].t # need relative time, because trajectories might not start at time 0
         td_t = self.X[t_relative]
         dets, probs = self.detectionSpace.collectWithin(td_t.t, td_t)
-        print("current: ", td_t, "around: ", dets, probs)
+        # print("current: ", td_t, "around: ", dets, probs)
 
         # 2. get each detection's probability in image (we get that from detector)
         p_hi = 1
@@ -144,12 +144,20 @@ class Trajectory:
         result = result + np.sum( np.log(probs) )
         return result
     
+    ##### how to use g:
+    # tr is current trajectory
+    # for td in tr.X:
+    #     g_k = tr.g(td.t) # throws indexOutOfBounds!  (!! method collects all from its neighbourhood, and not just ones that were used to build trajectory)
+    #     if(g_k is None):
+    #         continue # do not add anything if has no detections (see method Trajectory.g(...))
+    #     S_err = S_err + ((1.0 - e2) + e2*g_k)
+    #####
+    
 
-    # method calculates g_k of detections in list (used for intersecting detections) ()
-    # [TODO] - (untested)
+    # method calculates g_k of detections in list (used for intersecting detections AND for detections used to build trajectory) (seems to work fine for now)
     def g_k(self, dets: list[Detection]):
         probs = self.getDetProbs(dets)
-        print(dets,probs)
+        # print(dets,probs)
         p_hi = 1
         result = p_hi 
         if(len(dets) == 0):
@@ -158,8 +166,7 @@ class Trajectory:
         return result
     
     
-    # method gets probabilities of detections in list around corresponding trajectory point
-    # [TODO] - might need to test it if it works (untested) !!! -> debug it! 
+    # method gets probabilities of detections in list around corresponding trajectory point (seems to work fine for now)
     def getDetProbs(self, det_list: list[Detection]):
         t_off = self.X[0].t # time of first detection, is used to calculate relative index of point in trajectory
         probs = []

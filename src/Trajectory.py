@@ -34,8 +34,7 @@ class Trajectory:
         return TDet((x_t1, y_t1), t+dt, td_current.v, td_current.theta)
     
     # method builds trajectory and returns list of trajectory detections (and holes)
-    # [TODO] - is it really necessary to predict positions in the future? maybe only in the past?
-    # HOLES: allow up to n holes, if no detections after n frames, discontinue (also delete all predictions)
+    # HOLES: allow up to n holes, if no detections after n frames, discontinue (also delete all predictions); also prune tails from both ends
     def connectPoints(self, td_orig: TDet, dt=1) -> list:
         # print("this is connect points:")
         t_n = len(self.detectionSpace.D)
@@ -178,6 +177,38 @@ class Trajectory:
         return probs
     
     # POMEMBNO!!
+
+
+    # NOT FINISHED! FINISH IT [TODO] !!!!
+    # method is used to extend existing trajectory to time t+1 (effectively: one step of connect)
+    # [TODO] - implement it: check if ok, else debug
+    # [TODO] - time? need current time (for reference)
+    def extend(self):
+        # 1. find detections around last detection
+        # 2. estimate, add to trajectory, ...
+        dt = 1
+    
+        td_current = self.X[-1] # current
+        td_pred = self.estimateNext(td_current, dt) # prediction
+        
+        next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1)
+
+        # add detections (objects, not just coords) to trajectory detections set (for intersections with other trajectories)
+        self.D.update(next_dets)
+
+        if(len(next_dets) == 0): # either hole or discontinued
+            self.holes = self.holes + 1
+        else:
+            n_holes = 0
+
+        # 3. estimate next detection: weighted mean of detections
+        td_next, _ = self.detectionSpace.estimateNext2(td_current, td_pred, next_dets, next_probs, dt=dt)
+            
+        # 4. add calculated estimate to list
+        self.X.append(td_next)
+    
+    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 
     def __str__(self):
         return "{t"+str(self.id)+", len="+str(len(self.X))+"}"

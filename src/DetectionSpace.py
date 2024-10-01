@@ -385,7 +385,7 @@ class DetectionSpace:
         max_v = 1
         for i in range((1<<(m))-1):
             current = np.dot(np.dot(v.T, Q), v)
-            print(current)
+            # print(current)
             # print(current, end="", flush=True)
             if(current > maximum):
                 maximum = current

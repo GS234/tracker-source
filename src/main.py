@@ -1,6 +1,7 @@
 from helper_func import coords2det2
 from DetectionSpace import DetectionSpace
 from Trajectory import Trajectory
+from Detection import Detection
 
 # testing trajectories:
 t1 = [
@@ -72,8 +73,6 @@ t3 = [
     [],
     [(255,420)]
 ]
-
-
 
 t2 = [
     [(250,249)],
@@ -173,7 +172,7 @@ def main():
     for dl in D:
         for d in dl:
             det_list.append(d)
-    print(det_list)
+    # print(det_list)
 
     # create detection space object:
     dspace = DetectionSpace(n)
@@ -192,12 +191,13 @@ def main():
 
     # d0 = D[0][0]
     # d1 = D[0][1]
-    # d2 = D[6][0]
+    # # d2 = D[6][0]
     
 
     # th1 = Trajectory(d0, dspace)
     # th1.build()
-    # th1.drawToSpace()
+    # # th1.drawToSpace()
+
     
     # th2 = Trajectory(d1, dspace)
     # th2.build()
@@ -213,7 +213,7 @@ def main():
 
 
     # Q = dspace.buildQBPMatrix([th1, th2, th3, th4], 1.0, 1.0)
-    # Q = dspace.buildQBPMatrix([th1, th2], 1.0, 1.0)
+    # Q = dspace.buildQBPMatrix([th1, th2], 1.0, 0.1)
     # Q = dspace.buildQBPMatrix([th1, th2, th3], 1.0, 1.0)
     Q = dspace.buildQBPMatrix(tr, 1.0, 0.1)
     # Q = dspace.buildQBPMatrix([tr[0],tr[1],tr[4],tr[5]], 0.0, 0.1)
@@ -239,6 +239,13 @@ def main():
     
     # tr[4].drawToSpace()
     # tr[5].drawToSpace()
+
+
+    dspace.D[11].append(Detection([173, 280], 11))
+    dspace.D[11].append(Detection([172, 281], 11))
+    # th1.extend()
+    # th1.drawToSpace()
+
     
     dspace.showSpace()
 

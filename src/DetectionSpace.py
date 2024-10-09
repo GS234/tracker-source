@@ -17,7 +17,7 @@ class DetectionSpace:
         self.window_name = "detection space"
         self.TR = [] # array for storing trajectories
         
-        self.D = []
+        self.D = [] # detections (2d array, 1st dim. is time, subarrays contain detections)
         if D is not None:
             self.D.append(D) # append detections at time t = 0
     
@@ -76,7 +76,7 @@ class DetectionSpace:
         return np.exp(-0.5* np.dot( np.dot(v, inv_cov_mat), v)) # score (unscaled prob) (za vizualizacijo)
     
     # probability dist. around trajectory detection (also uses velocity and orientation)
-    # [TODO] - stretch it according to velocity
+    # [TODO] - stretch it according to velocity [TODO TODO TODO]
     def getProb2(self, d:Detection, td:TDet, a=S1, b=S2) -> float:
         inv_cov_mat = np.array([[1.0/(3*a),0.0],[0.0,1.0/(3*b)]])
         
@@ -126,7 +126,7 @@ class DetectionSpace:
     # estimate next point in trajectory
     # input: last detection (for reference: estimate velocity, ...), predicted position, collected detections and their probabilities
     # output: estimated detection
-    def estimateNext2(self, d_last: TDet, d_pred: TDet, next_detections, next_detections_probs, dt=1) -> TDet:
+    def estimateNext2(self, d_last: TDet, d_pred: TDet, next_detections: list[Detection], next_detections_probs: list[float], dt=1) -> TDet:
         x_p = d_pred # predicted detection
         x_t = d_last # last detection in trajectory
         t_i1 = x_t.t+dt # next time
@@ -139,7 +139,7 @@ class DetectionSpace:
         
         # 1. compute weighted mean (prediction + all detections) to determine actual next point
         # temporal discount, as used in paper [pami, leibe et al. ...] = e^-lambda
-        L = 40 # lambda: temporal discount ([TODO] - un-hardcode) (should be large)
+        L = 40 # lambda: temporal discount ([TODO] - un-hardcode) (should be large (prediction should not be more significant than actual detection))
         p_tempDisc = np.exp(-L)
 
         # calculate normalization factor Z (sum of all weights):
@@ -158,7 +158,7 @@ class DetectionSpace:
         theta_t1 = d_last.theta
         if(v_t1 != 0): # only if it has speed this is relevant
             cos_theta = x_dif[0] / v_t1  # this is it, just trust me bro
-            theta_t1 = np.arccos(cos_theta) # co-domain is only from 0-pi, not a problem, because ellipse is symmetrical (so essentialy v ~ -v)
+            theta_t1 = np.arccos(cos_theta) # co-domain is only from 0-pi, not a problem, because ellipse is symmetrical (so essentially v ~ -v)
         if(x_dif[1] < 0): # same angle is computed for both sides, because we only compare magnitude, so correction is needed in some cases
             theta_t1 = -theta_t1
         

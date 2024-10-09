@@ -17,11 +17,11 @@ class Trajectory:
 
     def __init__(self, d0: Detection, detectionSpace: DetectionSpace):
         self.id = Trajectory.Tid # unique id of the trajectory
+        Trajectory.Tid = Trajectory.Tid+1
         self.origin = TDet(d0.x,d0.t,0,0)
         self.detectionSpace = detectionSpace # pointer to detection space in which trajectory lives (has detections)
-        Trajectory.Tid = Trajectory.Tid+1
         self.X = [ ] # trajectory points ("trajectory" detections)
-        self.holes = 0 # counter to count how many trajectory points have been added considering only estimate of next detection
+        self.holes = 0 # counter: how many trajectory points have been added considering only estimate of next detection
         self.S = 0 # score/support of the trajectory
         self.D = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
 
@@ -35,7 +35,7 @@ class Trajectory:
     
     # method builds trajectory and returns list of trajectory detections (and holes)
     # HOLES: allow up to n holes, if no detections after n frames, discontinue (also delete all predictions); also prune tails from both ends
-    def connectPoints(self, td_orig: TDet, dt=1) -> list:
+    def connectPoints(self, td_orig: TDet, dt=1) -> list[TDet]:
         # print("this is connect points:")
         t_n = len(self.detectionSpace.D)
         n_holes_total = 0 # skupno stevilo lukenj
@@ -54,7 +54,8 @@ class Trajectory:
             td_pred = self.estimateNext(td_current, dt)
             # print(td_pred.v)
             # 2.2 find next detections:
-            next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1)
+            # next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1) around CURRENT TDET (shouldn't it be around predicted?)
+            next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred) # collect in next frame (t+1) around prediction
 
             # print("current: ",td_current, "next dets: ", next_dets) # debug stuff
 
@@ -154,7 +155,7 @@ class Trajectory:
     
 
     # method calculates g_k of detections in list (used for intersecting detections AND for detections used to build trajectory) (seems to work fine for now)
-    def g_k(self, dets: list[Detection]):
+    def g_k(self, dets: list[Detection]) -> float:
         probs = self.getDetProbs(dets)
         # print(dets,probs)
         p_hi = 1
@@ -166,7 +167,7 @@ class Trajectory:
     
     
     # method gets probabilities of detections in list around corresponding trajectory point (seems to work fine for now)
-    def getDetProbs(self, det_list: list[Detection]):
+    def getDetProbs(self, det_list: list[Detection]) -> list[float]:
         t_off = self.X[0].t # time of first detection, is used to calculate relative index of point in trajectory
         probs = []
         
@@ -179,35 +180,38 @@ class Trajectory:
     # POMEMBNO!!
 
 
-    # NOT FINISHED! FINISH IT [TODO] !!!!
     # method is used to extend existing trajectory to time t+1 (effectively: one step of connect)
-    # [TODO] - implement it: check if ok, else debug
-    # [TODO] - time? need current time (for reference)
+    # [TODO] - time? need current time (for reference); further testing needed!
     def extend(self):
+        print("this is extend:")
         # 1. find detections around last detection
         # 2. estimate, add to trajectory, ...
         dt = 1
     
         td_current = self.X[-1] # current
         td_pred = self.estimateNext(td_current, dt) # prediction
+        print(td_pred)
+        print(td_current)
         
-        next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1)
+        next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1) !! IS THIS CORRECT? !!
+        # next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred) # collect in next frame (t+1) !! IS THIS CORRECT? !!
 
+        self.detectionSpace.drawX(td_pred.x, 0.5)
+        self.detectionSpace.drawDsearchRegionAroundDetection(td_pred.x)
+        print(next_dets)
+        
         # add detections (objects, not just coords) to trajectory detections set (for intersections with other trajectories)
         self.D.update(next_dets)
 
-        if(len(next_dets) == 0): # either hole or discontinued
+        if(len(next_dets) == 0): # hole
             self.holes = self.holes + 1
-        else:
-            n_holes = 0
+        
 
-        # 3. estimate next detection: weighted mean of detections
+        # # 3. estimate next detection: weighted mean of detections
         td_next, _ = self.detectionSpace.estimateNext2(td_current, td_pred, next_dets, next_probs, dt=dt)
             
-        # 4. add calculated estimate to list
+        # # 4. add calculated estimate to list
         self.X.append(td_next)
-    
-    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
     def __str__(self):

@@ -29,17 +29,19 @@ def detections2map(D, map):
         y = y%n
         
         # map[x,y]= 1.0 - (1.0 / (1.0+(d.t/20.0)))*0.9 # more correct, as more recent detections should be brighter
-        map[x,y]= 1.0
+        map[x,y]= [255,255,255]
         # map[x,y]= (1.0 / (1.0+(d.t/8))) # I like this more, but is not correct because of ^
 
 def coords2map(X, map, brightness=0.5, overwrite=True):
-    n = np.shape(map)[0]
+    h,w,_ = np.shape(map)
     for point in X:
         x, y = point
-        x = x%n
-        y = y%n
-        if(overwrite or map[x,y] == 0):
-            map[x,y]= brightness
+        x = x%h
+        y = y%w
+        if(overwrite or np.sum(map[x,y]) == 0):
+            b_color = int(brightness*255)
+            
+            map[x,y]= [b_color, b_color, b_color]
 
 
 
@@ -88,7 +90,6 @@ def incIndVec(vec: list[int], rev=False):
 
 
 # read detections from file and write it to list
-# [TODO] - convert tuples to 'some kind' of detections
 def readDetFile(filename: str):
     detections = []
     with open(filename) as fd:
@@ -106,12 +107,31 @@ def readDetFile(filename: str):
             # print()
     return detections
 
+# like ^ (readDetFile), this one returns detections instead of tuples
+def readDetFile2(filename: str):
+    detections = []
+    with open(filename) as fd:
+        frame_i = 0
+        for line in fd: # line represents frame at i (frame_i) - STARTS WITH 0
+            dets = line[0:-1].split(";")
+            a = []
+            for d in dets:
+                d_split = d.split(',')
+                if(d_split[0]):
+                    # print(d_split)
+                    bb = [int(float(i)) for i in d.split(',')]
+                    detection = bbDet2TDet(bb, frame_i)
+                    a.append(detection)
+            detections.append(a)
+            # print()
+            frame_i = frame_i + 1
+    return detections
+
+
 # bounding box deteciton to Detection - generates Detection object with coordinates of center of a bounding box
-# [TODO]
-def bbDet2TDet(bb: tuple):
-    x, y = bb[1],bb[0] # (x, y swapped, because of coordinate system)
-    return Detection()
-    pass
+def bbDet2TDet(bb: tuple, t: int = 0):
+    x, y = bb[0]+bb[2]//2,bb[1]+bb[3]//2 # (x, y swapped, because of coordinate system)
+    return Detection([x,y], t=t)
 
 
 

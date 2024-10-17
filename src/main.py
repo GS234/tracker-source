@@ -1,7 +1,9 @@
-from helper_func import coords2det2
+from helper_func import coords2det2, readDetFile2
 from DetectionSpace import DetectionSpace
 from Trajectory import Trajectory
 from Detection import Detection
+
+DATA_ROOT = "../data/"
 
 # testing trajectories:
 t1 = [
@@ -168,6 +170,9 @@ def main():
     
     D = coords2det2(t3_b)
 
+    D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
+    print(D13[0:100])
+
     det_list = []
     for dl in D:
         for d in dl:
@@ -175,7 +180,7 @@ def main():
     # print(det_list)
 
     # create detection space object:
-    dspace = DetectionSpace(n)
+    dspace = DetectionSpace(n,n)
     dspace.D = D
 
     tr = []
@@ -230,6 +235,7 @@ def main():
     for i in range(len(tr)):
         if(vv % 2 != 0):
             tr[i].drawToSpace()
+            pass
         vv = vv // 2
     
     # # tr[2].drawToSpace()

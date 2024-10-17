@@ -8,12 +8,16 @@ from helper_func import * # helper functions
 
 # global vars:
 S1, S2 = 15,15 # default s1,s2
-
+DATA_ROOT = "../data/"
 
 class DetectionSpace:
-    def __init__(self, n, D: list = None):
-        self.n = n # map size (dimensions)
-        self.map = np.zeros((n,n)).astype(np.float32) # init empty map
+    def __init__(self, h,w, D: list = None):
+        # self.map = np.zeros((n,n)).astype(np.float32) # init empty map (old way)
+        
+        self.map = np.zeros((h,w,3)).astype(np.uint8) # init empty map
+        
+        self.hw = (h,w) # map size (dimensions)
+        print(self.map)
         self.window_name = "detection space"
         self.TR = [] # array for storing trajectories
         
@@ -95,6 +99,7 @@ class DetectionSpace:
             for d in self.D:
                 detections2map(d, self.map)
         # print(map)
+        print(self.map)
         cv.imshow(self.window_name, self.map)
         while cv.getWindowProperty(self.window_name, cv.WND_PROP_VISIBLE) >= 1:
             cv.waitKey(1)

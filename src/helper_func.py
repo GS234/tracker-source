@@ -85,3 +85,37 @@ def incIndVec(vec: list[int], rev=False):
             c = 1
         else:
             break
+
+
+# read detections from file and write it to list
+# [TODO] - convert tuples to 'some kind' of detections
+def readDetFile(filename: str):
+    detections = []
+    with open(filename) as fd:
+        for line in fd:
+            dets = line[0:-1].split(";")
+            a = []
+            for d in dets:
+                d_split = d.split(',')
+                if(d_split[0]):
+                    # print(d_split)
+                    bb = [int(float(i)) for i in d.split(',')]
+                # a.append(tuple(d.split(',')))
+                a.append(tuple(bb))
+            detections.append(a)
+            # print()
+    return detections
+
+# bounding box deteciton to Detection - generates Detection object with coordinates of center of a bounding box
+# [TODO]
+def bbDet2TDet(bb: tuple):
+    x, y = bb[1],bb[0] # (x, y swapped, because of coordinate system)
+    return Detection()
+    pass
+
+
+
+if __name__ == "__main__":
+    filename = "../data/detections/LaSOT_car-17.txt"
+    readDetFile(filename=filename)
+

@@ -274,6 +274,28 @@ class DetectionSpace:
         points = np.dot(n, values) + x1.reshape((2,1))
         p_list = [(int(x[0]), int(x[1])) for x in points.T]
         coords2map(p_list, self.map, brightness, overwrite=False)
+    
+    # method draws bounding box in detection space
+    # [TODO] - modify
+    # def writeBoundingBox(self, bb: tuple, color: list = [255,255,255]) -> None:
+    #     H, W, _ = np.shape(image)
+    #     # print(W, H)
+    #     # 1. starting coordinate:
+    #     y, x, h, w = bb
+    #     # print(bb)
+
+    #     # print(image)
+    #     # 2. draw horizontally:
+    #     for i in range(w):
+    #         x_i, y1_i, y2_i = x+i, y, y+h
+
+    #         image[x+i, y] = color
+    #         image[x+i, y+h] = color
+
+    #     # 3. draw vertically:
+    #     for i in range(h):
+    #         image[x, y+i] = color
+    #         image[x+w, y+i] = color
 
 
     # should be used for visualization only, is slow (O( (2*max(S1, S2)) ^2))

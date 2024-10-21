@@ -19,29 +19,30 @@ def coords2det2(X):
         i = i+1
     return detections
 
-def detections2map(D, map):
-    n = np.shape(map)[0]
+def detections2map(D, map, color: list = [255,255,255]): # draws detections
+    h,w,_ = np.shape(map)
     t_now = len(D) # which time instant is it
     for d in D:
-        x, y = d.x
+        # x, y = d.x
+        y, x = d.x # dimensions are switched! (because of row major order; it is messy [POSSIBLE TODO: think about it])
         # out of bounds is possible, this is the easiest quick fix, should probably be made different
-        x = x%n
-        y = y%n
+        x = x%h
+        y = y%w
         
         # map[x,y]= 1.0 - (1.0 / (1.0+(d.t/20.0)))*0.9 # more correct, as more recent detections should be brighter
-        map[x,y]= [255,255,255]
         # map[x,y]= (1.0 / (1.0+(d.t/8))) # I like this more, but is not correct because of ^
+        map[x,y]= color
 
-def coords2map(X, map, brightness=0.5, overwrite=True):
+def coords2map(X, map, color: list = [255,255,255], overwrite=True):
     h,w,_ = np.shape(map)
     for point in X:
         x, y = point
         x = x%h
         y = y%w
+        
+        
         if(overwrite or np.sum(map[x,y]) == 0):
-            b_color = int(brightness*255)
-            
-            map[x,y]= [b_color, b_color, b_color]
+            map[x,y] = color
 
 
 
@@ -120,7 +121,7 @@ def readDetFile2(filename: str):
                 if(d_split[0]):
                     # print(d_split)
                     bb = [int(float(i)) for i in d.split(',')]
-                    detection = bbDet2TDet(bb, frame_i)
+                    detection = bbDet2Det(bb, frame_i)
                     a.append(detection)
             detections.append(a)
             # print()
@@ -129,9 +130,9 @@ def readDetFile2(filename: str):
 
 
 # bounding box deteciton to Detection - generates Detection object with coordinates of center of a bounding box
-def bbDet2TDet(bb: tuple, t: int = 0):
+def bbDet2Det(bb: tuple, t: int = 0):
     x, y = bb[0]+bb[2]//2,bb[1]+bb[3]//2 # (x, y swapped, because of coordinate system)
-    return Detection([x,y], t=t)
+    return Detection([x,y], t=t, bb=bb)
 
 
 

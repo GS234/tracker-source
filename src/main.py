@@ -2,6 +2,9 @@ from helper_func import coords2det2, readDetFile2
 from DetectionSpace import DetectionSpace
 from Trajectory import Trajectory
 from Detection import Detection
+import cv2 as cv
+import numpy as np
+
 
 DATA_ROOT = "../data/"
 
@@ -125,6 +128,67 @@ t3_b = [
 # ---------------------
 
 # main:
+def main():
+    n = 500 # canvas size
+    seed = 42
+    
+    D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
+    d1 = D13[1][0]
+    # d2 = D13[4][2]
+    
+    # print(d1)
+    frame_i = f'{1:08}'
+    frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
+    h,w,_ = np.shape(frame)
+    dspace = DetectionSpace(h,w)
+    dspace.map = frame
+    dspace.D = D13[1:2]
+    
+    n = 30
+    # for i in range(2,len(D13)):
+    # for i in range(1,len(D13)):
+    for i in range(1,n):
+    # print(D13[0:20])
+        frame_i = f'{i:08}'
+        frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
+
+        # create detection space object:
+        dspace.map = frame
+        dspace.D.append(D13[i])
+
+        
+
+        dspace.showSpace()
+    
+    det_list = []
+    for dl in D13[1:n]:
+        for d in dl:
+            det_list.append(d)
+
+    tr = []
+
+    for i in range(0,len(det_list), 1):
+        d = det_list[i]
+        new_tr = Trajectory(d, dspace)
+        new_tr.build()
+        new_tr.drawToSpace()
+        tr.append(new_tr)
+    
+    # t1 = Trajectory(d1, dspace)
+    # t1.build()
+    # t1.drawToSpace()
+    # print(t1.X)
+    
+    # t1 = Trajectory(d2, dspace)
+    # t1.build()
+    # t1.drawToSpace()
+    dspace.showSpace()
+
+if __name__ == "__main__":
+    main()
+
+
+# other mains:
 # def main():
 #     n = 500 # canvas size
 #     seed = 42
@@ -164,97 +228,94 @@ t3_b = [
 #     dspace.showSpace()
 
 
-def main():
-    n = 500 # canvas size
-    seed = 42
+# def main():
+#     n = 500 # canvas size
+#     seed = 42
     
-    D = coords2det2(t3_b)
+#     D = coords2det2(t3_b)
 
-    D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
-    print(D13[0:100])
-
-    det_list = []
-    for dl in D:
-        for d in dl:
-            det_list.append(d)
-    # print(det_list)
-
-    # create detection space object:
-    dspace = DetectionSpace(n,n)
-    dspace.D = D
-
-    tr = []
-
-    for i in range(0,len(det_list)-15, 1):
-        d = det_list[i]
-        new_tr = Trajectory(d, dspace)
-        new_tr.build()
-        # new_tr.drawToSpace()
-        tr.append(new_tr)
+#     D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
+#     print(D13[0:20])
 
 
+#     det_list = []
+#     for dl in D:
+#         for d in dl:
+#             det_list.append(d)
+#     # print(det_list)
 
-    # d0 = D[0][0]
-    # d1 = D[0][1]
-    # # d2 = D[6][0]
+#     # create detection space object:
+#     dspace = DetectionSpace(n,n)
+#     dspace.D = D
+
+#     tr = []
+
+#     for i in range(0,len(det_list)-15, 1):
+#         d = det_list[i]
+#         new_tr = Trajectory(d, dspace)
+#         new_tr.build()
+#         # new_tr.drawToSpace()
+#         tr.append(new_tr)
+
+
+
+#     # d0 = D[0][0]
+#     # d1 = D[0][1]
+#     # # d2 = D[6][0]
     
 
-    # th1 = Trajectory(d0, dspace)
-    # th1.build()
-    # # th1.drawToSpace()
-
-    
-    # th2 = Trajectory(d1, dspace)
-    # th2.build()
-    # th2.drawToSpace()
-    
-    # th3 = Trajectory(d2, dspace)
-    # th3.build()
-    # th3.drawToSpace()
-    
-    # th4 = Trajectory(d3, dspace)
-    # th4.build()
-    # # th4.drawToSpace()
-
-
-    # Q = dspace.buildQBPMatrix([th1, th2, th3, th4], 1.0, 1.0)
-    # Q = dspace.buildQBPMatrix([th1, th2], 1.0, 0.1)
-    # Q = dspace.buildQBPMatrix([th1, th2, th3], 1.0, 1.0)
-    Q = dspace.buildQBPMatrix(tr, 1.0, 0.1)
-    # Q = dspace.buildQBPMatrix([tr[0],tr[1],tr[4],tr[5]], 0.0, 0.1)
-    # Q = dspace.buildQBPMatrix([tr[0], tr[4]], 0.0, 0.1)
-
-
-    # Q = dspace.buildQBPMatrix([tr[1],tr[3]], 1.0, 1.0)
-    
-    print("Q:\n", Q)
-    v = dspace.solveQBP(Q)
-    print(v)
-    
-    vv = v
-    for i in range(len(tr)):
-        if(vv % 2 != 0):
-            tr[i].drawToSpace()
-            pass
-        vv = vv // 2
-    
-    # # tr[2].drawToSpace()
-    
-    # tr[0].drawToSpace()
-    # tr[1].drawToSpace()
-    
-    # tr[4].drawToSpace()
-    # tr[5].drawToSpace()
-
-
-    dspace.D[11].append(Detection([173, 280], 11))
-    dspace.D[11].append(Detection([172, 281], 11))
-    # th1.extend()
-    # th1.drawToSpace()
+#     # th1 = Trajectory(d0, dspace)
+#     # th1.build()
+#     # # th1.drawToSpace()
 
     
-    dspace.showSpace()
+#     # th2 = Trajectory(d1, dspace)
+#     # th2.build()
+#     # th2.drawToSpace()
+    
+#     # th3 = Trajectory(d2, dspace)
+#     # th3.build()
+#     # th3.drawToSpace()
+    
+#     # th4 = Trajectory(d3, dspace)
+#     # th4.build()
+#     # # th4.drawToSpace()
 
 
-if __name__ == "__main__":
-    main()
+#     # Q = dspace.buildQBPMatrix([th1, th2, th3, th4], 1.0, 1.0)
+#     # Q = dspace.buildQBPMatrix([th1, th2], 1.0, 0.1)
+#     # Q = dspace.buildQBPMatrix([th1, th2, th3], 1.0, 1.0)
+#     Q = dspace.buildQBPMatrix(tr, 1.0, 0.1)
+#     # Q = dspace.buildQBPMatrix([tr[0],tr[1],tr[4],tr[5]], 0.0, 0.1)
+#     # Q = dspace.buildQBPMatrix([tr[0], tr[4]], 0.0, 0.1)
+
+
+#     # Q = dspace.buildQBPMatrix([tr[1],tr[3]], 1.0, 1.0)
+    
+#     print("Q:\n", Q)
+#     v = dspace.solveQBP(Q)
+#     print(v)
+    
+#     vv = v
+#     for i in range(len(tr)):
+#         if(vv % 2 != 0):
+#             tr[i].drawToSpace()
+#             pass
+#         vv = vv // 2
+    
+#     # # tr[2].drawToSpace()
+    
+#     # tr[0].drawToSpace()
+#     # tr[1].drawToSpace()
+    
+#     # tr[4].drawToSpace()
+#     # tr[5].drawToSpace()
+
+
+#     dspace.D[11].append(Detection([173, 280], 11))
+#     dspace.D[11].append(Detection([172, 281], 11))
+#     # th1.extend()
+#     # th1.drawToSpace()
+
+    
+#     dspace.showSpace()

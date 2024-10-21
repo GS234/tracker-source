@@ -4,8 +4,11 @@ import numpy as np
 # detection class; if becomes too complicated, move it to other file
 class Detection:
     # constructor: position, timestamp
-    def __init__(self, x, t=0):
+    def __init__(self, x, t=0, bb=None):
         self.x = np.array(x)
+        self.bb = bb # bounding box is also there, ...
+        if(bb is None): # ... if provided
+            self.bb = (0,0,0,0)
         self.t = t
 
     def __str__(self):

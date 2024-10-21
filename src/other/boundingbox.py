@@ -5,8 +5,9 @@ from helper_func import *
 import cv2 as cv
 
 DATA_PATH = "../../data/"
+X_FFFFFF = [255,255,255]
 
-def writeBoundingBox(image: np.array, bb: tuple, color: list = [255,255,255]) -> None:
+def writeBoundingBox(image: np.array, bb: tuple, color: list = X_FFFFFF) -> None:
     H, W, _ = np.shape(image)
     # print(W, H)
     # 1. starting coordinate:
@@ -29,16 +30,17 @@ def writeBoundingBox(image: np.array, bb: tuple, color: list = [255,255,255]) ->
 def drawX(image: np.array, X) -> None:
     x, y = X[1],X[0]
     
-    image[x-2,y-2] = [255,255,255]
-    image[x-1,y-1] = [255,255,255]
-    image[x,y]     = [255,255,255]
-    image[x+1,y+1] = [255,255,255]
-    image[x+2,y+2] = [255,255,255]
+    
+    image[x-2,y-2] = X_FFFFFF
+    image[x-1,y-1] = X_FFFFFF
+    image[x,y]     = X_FFFFFF
+    image[x+1,y+1] = X_FFFFFF
+    image[x+2,y+2] = X_FFFFFF
 
-    image[x-2,y+2] = [255,255,255]
-    image[x-1,y+1] = [255,255,255]
-    image[x+1,y-1] = [255,255,255]
-    image[x+2,y-2] = [255,255,255]
+    image[x-2,y+2] = X_FFFFFF
+    image[x-1,y+1] = X_FFFFFF
+    image[x+1,y-1] = X_FFFFFF
+    image[x+2,y-2] = X_FFFFFF
 
 
 

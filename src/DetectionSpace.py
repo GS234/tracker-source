@@ -9,15 +9,15 @@ from helper_func import * # helper functions
 # global vars:
 S1, S2 = 15,15 # default s1,s2
 DATA_ROOT = "../data/"
+X_FFFFFF = [255,255,255]
+GREEN = [0,255,0]
 
 class DetectionSpace:
     def __init__(self, h,w, D: list = None):
         # self.map = np.zeros((n,n)).astype(np.float32) # init empty map (old way)
         
         self.map = np.zeros((h,w,3)).astype(np.uint8) # init empty map
-        
         self.hw = (h,w) # map size (dimensions)
-        print(self.map)
         self.window_name = "detection space"
         self.TR = [] # array for storing trajectories
         
@@ -97,13 +97,21 @@ class DetectionSpace:
     def showSpace(self):
         if(self.D):
             for d in self.D:
-                detections2map(d, self.map)
+                detections2map(d, self.map, color=[0,0,0])
+            last_dets = self.D[-1]
+            
+            print(last_dets)
+            print()
+            for d in last_dets: # draw bounding boxes around last detections
+                self.drawBoundingBox(d.bb)
+                self.drawX(d.x,1.0)
         # print(map)
-        print(self.map)
+        # print(self.map)
         cv.imshow(self.window_name, self.map)
-        while cv.getWindowProperty(self.window_name, cv.WND_PROP_VISIBLE) >= 1:
-            cv.waitKey(1)
-        cv.destroyAllWindows()
+        cv.waitKey(0)
+        # while cv.getWindowProperty(self.window_name, cv.WND_PROP_VISIBLE) >= 1:
+        #     cv.waitKey(1)
+        # cv.destroyAllWindows()
     
     # collects detections within search region at time t
     # returns: DETECTIONS (has changed from coordinates, as we need those objects for trajectories), their probabilities
@@ -259,8 +267,8 @@ class DetectionSpace:
             [3,-3],
         ])
         x_shape = x_shape + c # add origin
-        p_list = [(x[0], x[1]) for x in x_shape]
-        coords2map(p_list, self.map, brightness=brightness)
+        p_list = [(x[1], x[0]) for x in x_shape]
+        coords2map(p_list, self.map, color=X_FFFFFF)
     
     def drawLine(self, x1, x2, brightness: float = 1):
         x1 = np.array(x1)
@@ -277,31 +285,31 @@ class DetectionSpace:
         values = values.reshape((1,len(values)))
         
         points = np.dot(n, values) + x1.reshape((2,1))
-        p_list = [(int(x[0]), int(x[1])) for x in points.T]
-        coords2map(p_list, self.map, brightness, overwrite=False)
+        p_list = [(int(x[1]), int(x[0])) for x in points.T]
+        coords2map(p_list, self.map, color=[0,0,255], overwrite=True)
     
     # method draws bounding box in detection space
-    # [TODO] - modify
-    # def writeBoundingBox(self, bb: tuple, color: list = [255,255,255]) -> None:
-    #     H, W, _ = np.shape(image)
-    #     # print(W, H)
-    #     # 1. starting coordinate:
-    #     y, x, h, w = bb
-    #     # print(bb)
+    def drawBoundingBox(self, bb: tuple, color: list = X_FFFFFF) -> None:
+        # print(W, H)
+        # 1. starting coordinate:
+        y, x, h, w = bb
+        # print(bb)
 
-    #     # print(image)
-    #     # 2. draw horizontally:
-    #     for i in range(w):
-    #         x_i, y1_i, y2_i = x+i, y, y+h
+        points = []
 
-    #         image[x+i, y] = color
-    #         image[x+i, y+h] = color
+        # print(image)
+        # 2. draw horizontally:
+        for i in range(w):
+            x_i, y1_i, y2_i = x+i, y, y+h
 
-    #     # 3. draw vertically:
-    #     for i in range(h):
-    #         image[x, y+i] = color
-    #         image[x+w, y+i] = color
+            points.append((x+i, y))
+            points.append((x+i, y+h))
 
+        # 3. draw vertically:
+        for i in range(h):
+            points.append((x, y+i))
+            points.append((x+w, y+i))
+        coords2map(points, self.map, color=GREEN, overwrite=True)
 
     # should be used for visualization only, is slow (O( (2*max(S1, S2)) ^2))
     def drawProbDistAroundDetection(self, x):

@@ -2,3 +2,4 @@ images
 src/__pycache__
 RAFT
 data
+src/other/estimates

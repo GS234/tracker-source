@@ -4,6 +4,7 @@ from Trajectory import Trajectory
 from Detection import Detection
 import cv2 as cv
 import numpy as np
+np.set_printoptions(threshold=np.inf)
 
 
 DATA_ROOT = "../data/"
@@ -153,6 +154,8 @@ def main():
         frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
 
         # create detection space object:
+
+        dspace.lastFrame = frame.copy()
         dspace.map = frame
         dspace.D.append(D13[i])
 
@@ -182,7 +185,28 @@ def main():
     # t1 = Trajectory(d2, dspace)
     # t1.build()
     # t1.drawToSpace()
+    # Q = dspace.buildQBPMatrix(tr[0:10], 0.0,1.0)
+    Q = dspace.buildQBPMatrix(tr[0:10], 0.0,1.0) # this is fast
     dspace.showSpace()
+    dspace.clearSpace()
+    dspace.showSpace()
+
+    dspace.clearSpace()
+
+    v = dspace.solveQBP(Q)
+    print(v)
+
+    vv = v
+    for i in range(len(tr)):
+        if(vv % 2 != 0):
+            tr[i].drawToSpace()
+            pass
+        vv = vv // 2
+    
+    dspace.showSpace()
+
+    print(Q)
+    
 
 if __name__ == "__main__":
     main()

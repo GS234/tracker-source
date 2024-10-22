@@ -15,7 +15,7 @@ GREEN = [0,255,0]
 class DetectionSpace:
     def __init__(self, h,w, D: list = None):
         # self.map = np.zeros((n,n)).astype(np.float32) # init empty map (old way)
-        
+        self.lastFrame = np.zeros((h,w,3)).astype(np.uint8)
         self.map = np.zeros((h,w,3)).astype(np.uint8) # init empty map
         self.hw = (h,w) # map size (dimensions)
         self.window_name = "detection space"
@@ -113,6 +113,10 @@ class DetectionSpace:
         #     cv.waitKey(1)
         # cv.destroyAllWindows()
     
+    # method clears detection space of all other things except for detections and last detections' boundingboxes
+    def clearSpace(self):
+        self.map = self.lastFrame.copy()
+
     # collects detections within search region at time t
     # returns: DETECTIONS (has changed from coordinates, as we need those objects for trajectories), their probabilities
     def collectWithin(self, t:int, td: TDet):

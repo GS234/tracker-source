@@ -129,127 +129,147 @@ t3_b = [
 # ---------------------
 
 # main:
+# def main():
+#     n = 500 # canvas size
+#     seed = 42
+    
+#     D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
+#     d1 = D13[1][0]
+#     # d2 = D13[4][2]
+    
+#     # print(d1)
+#     frame_i = f'{1:08}'
+#     frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
+#     h,w,_ = np.shape(frame)
+#     dspace = DetectionSpace(h,w)
+#     dspace.map = frame
+#     dspace.D = D13[1:2]
+    
+#     n = 30
+#     # for i in range(2,len(D13)):
+#     # for i in range(1,len(D13)):
+#     for i in range(1,n):
+#     # print(D13[0:20])
+#         frame_i = f'{i:08}'
+#         frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
+
+#         # create detection space object:
+
+#         dspace.lastFrame = frame.copy()
+#         dspace.map = frame
+#         dspace.D.append(D13[i])
+
+        
+
+#         dspace.showSpace()
+    
+#     det_list = []
+#     for dl in D13[1:n]:
+#         for d in dl:
+#             det_list.append(d)
+
+#     tr = []
+
+#     for i in range(0,len(det_list), 1):
+#         d = det_list[i]
+#         new_tr = Trajectory(d, dspace)
+#         new_tr.build()
+#         new_tr.drawToSpace()
+#         tr.append(new_tr)
+    
+#     # t1 = Trajectory(d1, dspace)
+#     # t1.build()
+#     # t1.drawToSpace()
+#     # print(t1.X)
+    
+#     # t1 = Trajectory(d2, dspace)
+#     # t1.build()
+#     # t1.drawToSpace()
+#     # Q = dspace.buildQBPMatrix(tr[0:10], 0.0,1.0)
+#     Q = dspace.buildQBPMatrix(tr[0:10], 0.0,1.0) # this is fast
+#     dspace.showSpace()
+#     dspace.clearSpace()
+#     dspace.showSpace()
+
+#     dspace.clearSpace()
+
+#     v = dspace.solveQBP(Q)
+#     print(v)
+
+#     vv = v
+#     for i in range(len(tr)):
+#         if(vv % 2 != 0):
+#             tr[i].drawToSpace()
+#             pass
+#         vv = vv // 2
+    
+#     dspace.showSpace()
+
+#     print(Q)
+    
+
+
+# other mains:
 def main():
     n = 500 # canvas size
     seed = 42
     
-    D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
-    d1 = D13[1][0]
-    # d2 = D13[4][2]
+    D = coords2det2(t3_b)
+
+    # create detection space object:
+    dspace = DetectionSpace(n,n)
+    dspace.D = D
+
     
-    # print(d1)
-    frame_i = f'{1:08}'
-    frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
-    h,w,_ = np.shape(frame)
-    dspace = DetectionSpace(h,w)
-    dspace.map = frame
-    dspace.D = D13[1:2]
-    
-    n = 30
-    # for i in range(2,len(D13)):
-    # for i in range(1,len(D13)):
-    for i in range(1,n):
-    # print(D13[0:20])
-        frame_i = f'{i:08}'
-        frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
-
-        # create detection space object:
-
-        dspace.lastFrame = frame.copy()
-        dspace.map = frame
-        dspace.D.append(D13[i])
-
-        
-
-        dspace.showSpace()
-    
+    # trajectories:
     det_list = []
-    for dl in D13[1:n]:
+    for dl in D:
         for d in dl:
             det_list.append(d)
 
     tr = []
 
+    # for i in range(0,len(det_list)-15, 1):
     for i in range(0,len(det_list), 1):
         d = det_list[i]
         new_tr = Trajectory(d, dspace)
         new_tr.build()
-        new_tr.drawToSpace()
+        # new_tr.drawToSpace()
         tr.append(new_tr)
-    
-    # t1 = Trajectory(d1, dspace)
-    # t1.build()
-    # t1.drawToSpace()
-    # print(t1.X)
-    
-    # t1 = Trajectory(d2, dspace)
-    # t1.build()
-    # t1.drawToSpace()
-    # Q = dspace.buildQBPMatrix(tr[0:10], 0.0,1.0)
-    Q = dspace.buildQBPMatrix(tr[0:10], 0.0,1.0) # this is fast
-    dspace.showSpace()
-    dspace.clearSpace()
-    dspace.showSpace()
+    # ----
 
-    dspace.clearSpace()
+    # debug:
+    # best with solve2: (8, 13)
+    t1, t2 = tr[6], tr[8]
 
-    v = dspace.solveQBP(Q)
+    # best with solve: (exhaustive search) (8, 13)
+    tr3,tr4,tr5,tr6,tr7 = tr[8],tr[10],tr[13],tr[15],tr[16]
+
+
+    # trajectories selection:
+    # Q = dspace.buildQBPMatrix([th1, th1], 0.0, 1.0) # using such constants (0.0, 1.0) can lead to some off-diagonal elements to be positive (this is not ok for multibranch-ascend)
+    # Q = dspace.buildQBPMatrix([th1, th2], 0.0, 1.0)
+    # tr = [tr3,tr4,tr5,tr6,tr7]
+    Q = dspace.buildQBPMatrix(tr, 0.1, 0.1) # all
+    # print(tr)
+    # print("Q:\n", Q)
+    v = dspace.solveQBP2(Q)
     print(v)
 
-    vv = v
+    
+
+
+
     for i in range(len(tr)):
-        if(vv % 2 != 0):
+        if(v[0][i] == 1):
             tr[i].drawToSpace()
-            pass
-        vv = vv // 2
-    
-    dspace.showSpace()
-
-    print(Q)
-    
-
-if __name__ == "__main__":
-    main()
-
-
-# other mains:
-# def main():
-#     n = 500 # canvas size
-#     seed = 42
-    
-#     D = coords2det2(t3_b)
-
-#     # create detection space object:
-#     dspace = DetectionSpace(n)
-#     dspace.D = D
-
-#     d0 = D[0][1]
-#     # d1 = D[1][0]
-
-#     th1 = Trajectory(d0, dspace)
-#     th1.build()
-#     th1.drawToSpace()
-    
-#     # th2 = Trajectory(d1, dspace)
-#     # th2.build()
-#     # th2.drawToSpace()
-    
-#     # th3 = Trajectory(d2, dspace)
-#     # th3.build()
-#     # th3.drawToSpace()
-    
-#     # th4 = Trajectory(d3, dspace)
-#     # th4.build()
-#     # # th4.drawToSpace()
-#     # print(th1.X)
-
-
-#     Q = dspace.buildQBPMatrix([th1, th1], 0.0, 1.0)
-#     print("Q:\n", Q)
-#     v = dspace.solveQBP(Q)
-#     print(v)
+            dspace.showSpace([255,255,255])
+            dspace.clearSpace()
         
-#     dspace.showSpace()
+
+    # --------
+        
+    # dspace.showSpace([255,255,255])
 
 
 # def main():
@@ -343,3 +363,68 @@ if __name__ == "__main__":
 
     
 #     dspace.showSpace()
+
+
+# def main():
+#     n = 500 # canvas size
+#     seed = 42
+    
+#     D = coords2det2(t3_b)
+
+#     # create detection space object:
+#     dspace = DetectionSpace(n,n)
+#     dspace.D = D
+
+
+#     det_list = []
+#     for dl in D:
+#         for d in dl:
+#             det_list.append(d)
+
+#     tr = []
+
+#     for i in range(0,len(det_list)-15, 1):
+#         d = det_list[i]
+#         new_tr = Trajectory(d, dspace)
+#         new_tr.build()
+#         # new_tr.drawToSpace()
+#         tr.append(new_tr)
+
+
+#     # trajectories:
+#     d0 = D[0][1]
+#     d1 = D[1][0]
+
+#     th1 = Trajectory(d0, dspace)
+#     th1.build()
+#     th1.drawToSpace()
+    
+#     th2 = Trajectory(d1, dspace)
+#     th2.build()
+#     th2.drawToSpace()
+    
+#     # th3 = Trajectory(d2, dspace)
+#     # th3.build()
+#     # th3.drawToSpace()
+    
+#     # th4 = Trajectory(d3, dspace)
+#     # th4.build()
+#     # # th4.drawToSpace()
+#     # print(th1.X)
+#     # ----
+
+#     # trajectories selection:
+#     # Q = dspace.buildQBPMatrix([th1, th1], 0.0, 1.0)
+#     Q = dspace.buildQBPMatrix([th1, th2], 0.0, 1.0)
+#     print("Q:\n", Q)
+#     v = dspace.solveQBP(Q)
+#     print(v)
+#     # --------
+        
+#     dspace.showSpace([255,255,255])
+
+
+
+
+if __name__ == "__main__":
+    main()

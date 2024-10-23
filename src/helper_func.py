@@ -89,6 +89,16 @@ def incIndVec(vec: list[int], rev=False):
         else:
             break
 
+# function creates array that has binary representation of integer
+def binArrFromInt(n: int, l: int):
+    i = 0
+    v = np.zeros(l).astype(np.int8)
+    while (n != 0 and i < l):
+        v[i] = n%2
+        n = n>>1
+        i = i+1
+    return v
+
 
 # read detections from file and write it to list
 def readDetFile(filename: str):

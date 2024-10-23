@@ -4,6 +4,7 @@ from Trajectory import Trajectory
 from Detection import Detection, TDet
 import cv2 as cv
 from helper_func import * # helper functions
+from collections import deque # for queue (de - double ended)
 
 
 # global vars:
@@ -94,14 +95,14 @@ class DetectionSpace:
     # ----------------------------------------------------------------------------------------
     
 
-    def showSpace(self):
+    def showSpace(self, det_color=[0,0,0]):
         if(self.D):
             for d in self.D:
-                detections2map(d, self.map, color=[0,0,0])
+                detections2map(d, self.map, color=det_color)
             last_dets = self.D[-1]
             
-            print(last_dets)
-            print()
+            # print(last_dets)
+            # print()
             for d in last_dets: # draw bounding boxes around last detections
                 self.drawBoundingBox(d.bb)
                 self.drawX(d.x,1.0)
@@ -422,6 +423,7 @@ class DetectionSpace:
         # 2. find maximum by calculating all possible combinations (brute force method, should try something else in the future - [TODO])
         maximum = 0
         max_v = 1
+        i=0
         for i in range((1<<(m))-1):
             current = np.dot(np.dot(v.T, Q), v)
             # print(current)
@@ -430,5 +432,58 @@ class DetectionSpace:
                 maximum = current
                 max_v = i+1
             incIndVec(v, rev=True)
+        print(maximum, "n_iter: ",i)
+        return (binArrFromInt(max_v, m), maximum)
+    
+    # multibranch-ascent qbp solver (seems to work fine, for now):
+    # basically bfs over specifically generated 0-1 space + some special conditions (see working notes)
+    def solveQBP2(self, Q: np.array):
+        # 1. init variables
+        n_el,_ = np.shape(Q) # length of vector - number of elements
+        v = np.zeros(n_el).astype(np.uint8)
+
+        # max:
+        D_max = 0
+        v_max = v
+
+        depth = 0 # current depth, each new node gets value depth+1
+        local_max_d = 0 # local max D, when reached new depth, update global with that
+        local_max_v = v
+
+        # init queue:
+        queue = deque([(v,0,depth)]) # (v, n, d_current_max)
+
+        # 2. main loop:
+        n_iter = 0
+        while((len(queue) != 0)):
+            V, n, current_depth = queue.popleft()
+            # if reached new depth: update global maximum with that of current depth
+            if(current_depth > depth):
+                depth = current_depth
+                D_max = local_max_d
+                v_max = local_max_v.copy()
+                # print("depth: ", depth, " new max: ", D_max) # debug stuff
+
+            # calculate score of current selection:
+            d_current = np.dot(np.dot(V, Q),V)
+            # print(V, ", D: ", d_current) # debug stuff
+            
+            # check if current is better than any other from upper level, if it is, update&generate, else skip
+            if(d_current < D_max):
+                continue # discontinue branch
+
+            # update current depth maximum, if exceeded
+            if(d_current >= local_max_d):
+                local_max_d = d_current
+                local_max_v = V.copy()
+
+            # generate next nodes, put them into queue
+            for i in range(n_el-n):
+                v_i = n+i
+                V[v_i] = 1
+                queue.append((V.copy(), v_i+1, depth+1))
+                V[v_i] = 0
+            n_iter += 1
         
-        return max_v
+        print("n_iter: " + str(n_iter), " n_combinations: ", (1 << n_el)) # some stats
+        return (v_max, D_max)

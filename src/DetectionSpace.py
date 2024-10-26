@@ -437,14 +437,13 @@ class DetectionSpace:
     
     # multibranch-ascent qbp solver (seems to work fine, for now):
     # basically bfs over specifically generated 0-1 space + some special conditions (see working notes)
-    def solveQBP2(self, Q: np.array):
+    def solveQBP2(self, Q: np.array, debug=False):
         # 1. init variables
         n_el,_ = np.shape(Q) # length of vector - number of elements
         v = np.zeros(n_el).astype(np.uint8)
 
         # max:
-        D_max = 0
-        v_max = v
+        D_max = 0 # previous maximum
 
         depth = 0 # current depth, each new node gets value depth+1
         local_max_d = 0 # local max D, when reached new depth, update global with that
@@ -461,12 +460,13 @@ class DetectionSpace:
             if(current_depth > depth):
                 depth = current_depth
                 D_max = local_max_d
-                v_max = local_max_v.copy()
-                # print("depth: ", depth, " new max: ", D_max) # debug stuff
+                if(debug):
+                    print("depth: ", depth, " new max: ", D_max) # debug stuff
 
             # calculate score of current selection:
             d_current = np.dot(np.dot(V, Q),V)
-            # print(V, ", D: ", d_current) # debug stuff
+            if(debug):
+                print(V, ", D: ", d_current) # debug stuff
             
             # check if current is better than any other from upper level, if it is, update&generate, else skip
             if(d_current < D_max):
@@ -485,5 +485,7 @@ class DetectionSpace:
                 V[v_i] = 0
             n_iter += 1
         
+        
         print("n_iter: " + str(n_iter), " n_combinations: ", (1 << n_el)) # some stats
-        return (v_max, D_max)
+        # return (v_max, D_max)
+        return (local_max_v, local_max_d)

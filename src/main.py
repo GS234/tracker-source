@@ -4,7 +4,7 @@ from Trajectory import Trajectory
 from Detection import Detection
 import cv2 as cv
 import numpy as np
-np.set_printoptions(threshold=np.inf)
+# np.set_printoptions(threshold=np.inf)
 
 
 DATA_ROOT = "../data/"
@@ -130,97 +130,206 @@ t3_b = [
 
 # main:
 def main():
+
+    # INIT:
+    # get through first n frames and initiate (hopefully) strong trajectories
+
+    # init variables used in process
     D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
-    d1 = D13[1][0]
-    # d2 = D13[4][2]
+    t_global = 0 # current time (frame)
+    n = 20
+    n_res = len(D13) - n
+    tr = []
+    # ------------------------------
     
-    # print(d1)
-    frame_i = f'{1:08}'
+    t_global = 1
+    frame_i = f'{t_global:08}'
     frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
     h,w,_ = np.shape(frame)
     dspace = DetectionSpace(h,w)
     dspace.map = frame
-    dspace.D = D13[1:2]
+    dspace.D.append([]) # skip zero, because frames are read from 1 on
+    # dspace.D = D13[1:2]
+    print("init dspace: ", dspace.D)
     
-    n = 20
-    # for i in range(2,len(D13)):
-    # for i in range(1,len(D13)):
+    
     for i in range(1,n):
-    # print(D13[0:20])
         frame_i = f'{i:08}'
         frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
 
         # create detection space object:
-
         dspace.lastFrame = frame.copy()
         dspace.map = frame
         dspace.D.append(D13[i])
+        t_global = t_global + 1
 
-        
-
-        # dspace.showSpace()
-    
     det_list = []
     for dl in D13[1:n]:
         for d in dl:
             det_list.append(d)
 
-    tr = []
-
+    # build trajectories from all detectinos
     for i in range(0,len(det_list), 1):
         d = det_list[i]
         new_tr = Trajectory(d, dspace)
         new_tr.build()
-        # new_tr.drawToSpace()
         tr.append(new_tr)
     print(len(tr))
     
-    # t1 = Trajectory(d1, dspace)
-    # t1.build()
-    # t1.drawToSpace()
-    # print(t1.X)
-    
-    # t1 = Trajectory(d2, dspace)
-    # t1.build()
-    # t1.drawToSpace()
-    
-    # tr = tr[0:70]
-    # tr = [tr[30],tr[59],tr[38],tr[56],tr[61]]
-    # tr = [tr[30],tr[38],tr[56],tr[59],tr[61]]
-    # tr = [tr[30],tr[59]]
-    # tr = [tr[30],tr[38],tr[65],tr[67],tr[68]]
-    
-    # Q = dspace.buildQBPMatrix(tr[0:10], 0.0,1.0)
-    # Q = dspace.buildQBPMatrix(tr[0:10], 0.0,1.0) # this is fast
-    # Q = dspace.buildQBPMatrix(tr, 0.1,0.1)
+    # choose best trajectories:
     Q = dspace.buildQBPMatrix(tr, 1.2,0.1)
     print(Q)
-    # dspace.showSpace()
-    # dspace.clearSpace()
-    # dspace.showSpace()
-
-    # dspace.clearSpace()
 
     print("solving")
-    # v = dspace.solveQBP2(Q, debug=True) # this is slow
     v = dspace.solveQBP2(Q) # this is slow
     print("solved")
     print(v)
 
-
+    # draw them
+    tr_temp = [] # temporary tr (to store only those, that are selected)
     for i in range(len(tr)):
-        print(i)
+        print(i, end= ", ", flush=True)
         if(v[0][i] != 0):
             dspace.clearSpace()
             tr[i].drawToSpace()
+            tr_temp.append(tr[i])
             dspace.showSpace()
+    print()
+
+    # keep only selected (only in init phase)
+    # print(tr)
+    tr = tr_temp
+    print(tr)
+
     
-    # dspace.showSpace()
+    # EXTEND (step):
+    dspace.clearSpace()
+    dspace.showSpace()
+    # print(dspace.D[:5])
+    # print(dspace.D[-5:])
+    print(t_global)
+
+    
+    # on every new frame, do:
+    for i in range(n_res):
+        # change frame
+        frame_i = f'{t_global:08}'
+        frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
+
+        # create detection space object:
+        dspace.lastFrame = frame.copy()
+        dspace.map = frame
+
+
+        # 1. get detections in current frame
+        # print(D13[t_global-1])
+        # print(D13[t_global])
+        dspace.D.append(D13[t_global])
+        # dspace.clearSpace()
+        # dspace.showSpace()
+
+
+        # 2. try to extend existing trajectories, for every new detection, start trajectory
+        for t in tr:
+            # print("extending trajectory ", t,"... ")
+            t.extend()
+        dspace.clearSpace()
+        for t in tr:
+            t.drawToSpace()
+        dspace.showSpace()
+
+
+        # 3. trajectory pruning: if trajectory inactive*, remove it
+        # * inactive, if not updated for 10 consecutive frames
+        
+        # on every 50-th frame, do hypothesis selection again:
+        print(i)
+        if(i%50 == 0):
+            Q = dspace.buildQBPMatrix(tr, 1.2,0.1)
+            print(Q)
+
+            print("solving")
+            v = dspace.solveQBP2(Q) # this is slow
+            print("solved")
+            print(v)
+
+            # choose best hypothesis, again (for testing purposes, code is copied from above)
+            tr_temp = [] # temporary tr (to store only those, that are selected)
+            dspace.clearSpace()
+            for k in range(len(tr)):
+                # print(i, end= ", ", flush=True)
+                if(v[0][k] != 0):
+                    tr[k].drawToSpace()
+                    tr_temp.append(tr[k])
+            dspace.showSpace()
+
+            # keep only selected (only in init phase)
+            # print(tr)
+            tr = tr_temp
+
+
+
+        t_global = t_global + 1
 
     
 
 
 # other mains:
+# def main():
+    # D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
+    # t_global = 0 # current time (frame)
+    
+    # # print(d1)
+    # frame_i = f'{1:08}'
+    # frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
+    # h,w,_ = np.shape(frame)
+    # dspace = DetectionSpace(h,w)
+    # dspace.map = frame
+    # dspace.D = D13[1:2]
+    
+    # n = 20
+    # for i in range(1,n):
+    # # print(D13[0:20])
+    #     frame_i = f'{i:08}'
+    #     frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
+
+    #     # create detection space object:
+
+    #     dspace.lastFrame = frame.copy()
+    #     dspace.map = frame
+    #     dspace.D.append(D13[i])
+    
+    # det_list = []
+    # for dl in D13[1:n]:
+    #     for d in dl:
+    #         det_list.append(d)
+
+    # tr = []
+
+    # for i in range(0,len(det_list), 1):
+    #     d = det_list[i]
+    #     new_tr = Trajectory(d, dspace)
+    #     new_tr.build()
+    #     tr.append(new_tr)
+    # print(len(tr))
+    
+    # Q = dspace.buildQBPMatrix(tr, 1.2,0.1)
+    # print(Q)
+
+    # print("solving")
+    # v = dspace.solveQBP2(Q) # this is slow
+    # print("solved")
+    # print(v)
+
+    # for i in range(len(tr)):
+    #     print(i, end= ", ", flush=True)
+    #     if(v[0][i] != 0):
+    #         dspace.clearSpace()
+    #         tr[i].drawToSpace()
+    #         dspace.showSpace()
+    # print()
+
+
 # def main():
 #     n = 500 # canvas size
 #     seed = 42

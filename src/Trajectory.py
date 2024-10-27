@@ -182,23 +182,21 @@ class Trajectory:
 
     # method is used to extend existing trajectory to time t+1 (effectively: one step of connect)
     # [TODO] - time? need current time (for reference); further testing needed!
-    def extend(self):
-        print("this is extend:")
+    def extend(self, debug=False):
         # 1. find detections around last detection
         # 2. estimate, add to trajectory, ...
         dt = 1
     
         td_current = self.X[-1] # current
         td_pred = self.estimateNext(td_current, dt) # prediction
-        print(td_pred)
-        print(td_current)
+        
         
         next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1) !! IS THIS CORRECT? !!
         # next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred) # collect in next frame (t+1) !! IS THIS CORRECT? !!
 
         self.detectionSpace.drawX(td_pred.x, 0.5)
         self.detectionSpace.drawDsearchRegionAroundDetection(td_pred.x)
-        print(next_dets)
+        
         
         # add detections (objects, not just coords) to trajectory detections set (for intersections with other trajectories)
         self.D.update(next_dets)
@@ -209,9 +207,17 @@ class Trajectory:
 
         # # 3. estimate next detection: weighted mean of detections
         td_next, _ = self.detectionSpace.estimateNext2(td_current, td_pred, next_dets, next_probs, dt=dt)
+        
             
         # # 4. add calculated estimate to list
         self.X.append(td_next)
+        if(debug):
+            print("this is extend:")
+            print(td_current)
+            print(td_pred)
+            print(next_dets)
+            print("next: ", td_next)
+            print(self.X)
 
 
     def __str__(self):

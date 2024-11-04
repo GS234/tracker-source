@@ -48,7 +48,9 @@ class DetectionSpace:
         X_rot = np.dot(rot_mat, X) # rotate it!
         X_rot[0] += x[0]
         X_rot[1] += x[1]
-        return [(b[0], b[1]) for b in X_rot.astype(np.int32).T]
+        return X_rot.astype(np.int32).T # normal (x, y)
+        # return [(b[0], b[1]) for b in X_rot.astype(np.int32).T]
+        # return np.dot(X_rot.T, [[0,1],[1,0]]).astype(np.int32) # return switched coordinates (y, x)
 
     # !!! POMEMBNO:
     # check if detection d is within this detection's search region (seems to work fine)
@@ -252,7 +254,8 @@ class DetectionSpace:
         if(theta is None):
             theta = 0
         bounds = self.getSearchRegionBounds(x,s1,s2, theta)
-        coords2map(bounds, self.map, overwrite=False)
+        bounds = np.dot(bounds, [[0,1],[1,0]]) # flip coordinates
+        coords2map(bounds, self.map, color=[255,0,255])
     
     # method draws x instead of .
     def drawX(self, c:list, brightness=0.5) -> None:
@@ -275,7 +278,7 @@ class DetectionSpace:
         p_list = [(x[1], x[0]) for x in x_shape]
         coords2map(p_list, self.map, color=X_FFFFFF)
     
-    def drawLine(self, x1, x2, brightness: float = 1):
+    def drawLine(self, x1, x2, color=[0,0,255]):
         x1 = np.array(x1)
         x2 = np.array(x2)
         n = (x2 - x1) # normal from x1 to x2
@@ -291,7 +294,7 @@ class DetectionSpace:
         
         points = np.dot(n, values) + x1.reshape((2,1))
         p_list = [(int(x[1]), int(x[0])) for x in points.T]
-        coords2map(p_list, self.map, color=[0,0,255], overwrite=True)
+        coords2map(p_list, self.map, color=color, overwrite=True)
     
     # method draws bounding box in detection space
     def drawBoundingBox(self, bb: tuple, color: list = X_FFFFFF) -> None:

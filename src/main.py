@@ -1,4 +1,4 @@
-from helper_func import coords2det2, readDetFile2
+from helper_func import coords2det2, readDetFile2, coords2map
 from DetectionSpace import DetectionSpace
 from Trajectory import Trajectory
 from Detection import Detection
@@ -8,6 +8,7 @@ import numpy as np
 
 
 DATA_ROOT = "../data/"
+FRAMES_PATH = "frames/LaSOT_bird-2/color/"
 
 # testing trajectories:
 t1 = [
@@ -128,6 +129,56 @@ t3_b = [
 
 # ---------------------
 
+# some main-specific functions:
+
+# combination of building matrix and selection of trajectories
+def selectBest(tr: list, dspace: DetectionSpace, debug = False) -> list:
+    print("building Q")
+    Q = dspace.buildQBPMatrix(tr, 1.2,0.1)
+    if(debug):
+        print(Q)
+    print("solving")
+    v = dspace.solveQBP2(Q) # this is slow
+    print("solved")
+    if(debug):
+        print(v)
+    return v
+
+# function returns list of only those trajectories, that are selected
+def getSelectedNvisualize(tr: list[Trajectory], v: list, dspace:DetectionSpace, debug=False, separately=False) -> list:
+    # draw them
+    tr_temp = [] # temporary tr (to store only those, that are selected)
+    for i in range(len(tr)):
+        if(debug):
+            print(i, end= ", ", flush=True)
+        if(v[0][i] != 0):
+            if(separately):
+                dspace.clearSpace()
+            tr[i].drawToSpace()
+            if(separately):
+                dspace.showSpace()
+            tr_temp.append(tr[i])
+    if(not separately):
+        dspace.showSpace()
+    if(debug):
+        print()
+    return tr_temp
+
+# function reads i-th frame
+def getFrameAtI(i: int, path=FRAMES_PATH):
+    frame_i = f'{i:08}'
+    frame = cv.imread(DATA_ROOT+path+str(frame_i)+".jpg")
+    return frame
+
+# breakpoint function: stop and wait for keyboard interrupt
+def stopNwaitForKI():
+    try:
+        while True:
+            pass
+    except KeyboardInterrupt:
+        print("continue")
+
+
 # main:
 def main():
 
@@ -139,12 +190,11 @@ def main():
     t_global = 0 # current time (frame)
     n = 20
     n_res = len(D13) - n
-    tr = []
+    tr: list[Trajectory] = []
     # ------------------------------
     
     t_global = 1
-    frame_i = f'{t_global:08}'
-    frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
+    frame = getFrameAtI(t_global)
     h,w,_ = np.shape(frame)
     dspace = DetectionSpace(h,w)
     dspace.map = frame
@@ -153,22 +203,24 @@ def main():
     print("init dspace: ", dspace.D)
     
     
+    # append detections
     for i in range(1,n):
-        frame_i = f'{i:08}'
-        frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
-
-        # create detection space object:
-        dspace.lastFrame = frame.copy()
-        dspace.map = frame
         dspace.D.append(D13[i])
         t_global = t_global + 1
+    
+    # set last frame
+    frame = getFrameAtI(n-1)
+    dspace.lastFrame = frame.copy()
+    dspace.map = frame
 
+    # build trajectories from all detectinos
+    # 1. get list of all detections
     det_list = []
     for dl in D13[1:n]:
         for d in dl:
             det_list.append(d)
-
-    # build trajectories from all detectinos
+    
+    # 2. build them
     for i in range(0,len(det_list), 1):
         d = det_list[i]
         new_tr = Trajectory(d, dspace)
@@ -176,64 +228,39 @@ def main():
         tr.append(new_tr)
     print(len(tr))
     
-    # choose best trajectories:
-    Q = dspace.buildQBPMatrix(tr, 1.2,0.1)
-    print(Q)
-
-    print("solving")
-    v = dspace.solveQBP2(Q) # this is slow
-    print("solved")
-    print(v)
-
-    # draw them
-    tr_temp = [] # temporary tr (to store only those, that are selected)
-    for i in range(len(tr)):
-        print(i, end= ", ", flush=True)
-        if(v[0][i] != 0):
-            dspace.clearSpace()
-            tr[i].drawToSpace()
-            tr_temp.append(tr[i])
-            dspace.showSpace()
-    print()
-
+    # choose best trajectories and draw them:
+    v = selectBest(tr, dspace, True)
+    tr_temp = getSelectedNvisualize(tr, v, dspace, True, True)
+    
     # keep only selected (only in init phase)
-    # print(tr)
     tr = tr_temp
     print(tr)
+    # END INIT
 
     
     # EXTEND (step):
     dspace.clearSpace()
     dspace.showSpace()
-    # print(dspace.D[:5])
-    # print(dspace.D[-5:])
-    print(t_global)
+    print("next time instant: ",t_global)
 
     
     # on every new frame, do:
     for i in range(n_res):
-        # change frame
-        frame_i = f'{t_global:08}'
-        frame = cv.imread(DATA_ROOT+"frames/LaSOT_bird-2/color/"+str(frame_i)+".jpg")
-
-        # create detection space object:
+        # 0. set new frame
+        frame = getFrameAtI(t_global)
         dspace.lastFrame = frame.copy()
         dspace.map = frame
 
 
         # 1. get detections in current frame
-        # print(D13[t_global-1])
-        # print(D13[t_global])
         dspace.D.append(D13[t_global])
-        # dspace.clearSpace()
-        # dspace.showSpace()
-
-
-        # 2. try to extend existing trajectories, for every new detection, start trajectory
-        for t in tr:
-            # print("extending trajectory ", t,"... ")
-            t.extend()
+        
+        # 2. try to extend existing trajectories and for every new detection, start trajectory
         dspace.clearSpace()
+        for t in tr:
+            t.extend(n_empty=1)
+        # dspace.showSpace()
+        # dspace.clearSpace()
         for t in tr:
             t.drawToSpace()
         dspace.showSpace()
@@ -245,31 +272,18 @@ def main():
         # on every 50-th frame, do hypothesis selection again:
         print(i)
         if(i%50 == 0):
-            Q = dspace.buildQBPMatrix(tr, 1.2,0.1)
-            print(Q)
+            v = selectBest(tr, dspace, debug=True)
+            tr_temp = getSelectedNvisualize(tr, v, dspace, debug=True)
 
-            print("solving")
-            v = dspace.solveQBP2(Q) # this is slow
-            print("solved")
-            print(v)
-
-            # choose best hypothesis, again (for testing purposes, code is copied from above)
-            tr_temp = [] # temporary tr (to store only those, that are selected)
-            dspace.clearSpace()
-            for k in range(len(tr)):
-                # print(i, end= ", ", flush=True)
-                if(v[0][k] != 0):
-                    tr[k].drawToSpace()
-                    tr_temp.append(tr[k])
-            dspace.showSpace()
-
-            # keep only selected (only in init phase)
-            # print(tr)
+            # keep only selected (only for testing purposes)
             tr = tr_temp
 
-
-
         t_global = t_global + 1
+
+        # 195
+        if(i == 190):
+            stopNwaitForKI()
+    # END EXTEND
 
     
 

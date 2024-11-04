@@ -15,13 +15,19 @@ class Trajectory:
     # (could probably also use weighted average / average / random / build hypotheses for all of them (hard??)) --> discussion is needed
     Tid = 0 # apparently static? (want private static, maybe should be _Tid)
 
-    def __init__(self, d0: Detection, detectionSpace: DetectionSpace):
+    def __init__(self, d0: Detection, detectionSpace: DetectionSpace, color: list=None):
         self.id = Trajectory.Tid # unique id of the trajectory
+        
+        self.color = (np.random.rand(3)*150).astype(np.uint8)+10 # color of trajectory (for visualization)
+        self.color[2]=255
+        if(color is not None):
+            self.color = color
         Trajectory.Tid = Trajectory.Tid+1
         self.origin = TDet(d0.x,d0.t,0,0)
         self.detectionSpace = detectionSpace # pointer to detection space in which trajectory lives (has detections)
         self.X = [ ] # trajectory points ("trajectory" detections)
         self.holes = 0 # counter: how many trajectory points have been added considering only estimate of next detection
+        self.holes_ref = 0 # holes reference: used to calculate relative number of holes (set to self.holes first, then calculate difference) (used in extend)
         self.S = 0 # score/support of the trajectory
         self.D = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
 
@@ -116,7 +122,7 @@ class Trajectory:
             for i in range(len(self.X)-1):
                 xi = self.X[i].x
                 xi1 = self.X[i+1].x
-                self.detectionSpace.drawLine(xi,xi1,0.5)
+                self.detectionSpace.drawLine(xi,xi1,self.color)
                 # self.detectionSpace.drawDsearchRegionAroundDetection(xi1)
             self.detectionSpace.drawX(self.X[-1].x, x_brightness)
     
@@ -182,35 +188,48 @@ class Trajectory:
 
     # method is used to extend existing trajectory to time t+1 (effectively: one step of connect)
     # [TODO] - time? need current time (for reference); further testing needed!
-    def extend(self, debug=False):
+    def extend(self, debug=False, n_empty=-1):
         # 1. find detections around last detection
         # 2. estimate, add to trajectory, ...
         dt = 1
     
-        td_current = self.X[-1] # current
-        td_pred = self.estimateNext(td_current, dt) # prediction
+        td_current: TDet = self.X[-1] # current
+        td_pred: TDet = self.estimateNext(td_current, dt) # prediction
         
         
-        next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1) !! IS THIS CORRECT? !!
-        # next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred) # collect in next frame (t+1) !! IS THIS CORRECT? !!
+        # next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1) !! IS THIS CORRECT? !! (collect around current)
+        next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred) # collect around prediction
 
         self.detectionSpace.drawX(td_pred.x, 0.5)
         self.detectionSpace.drawDsearchRegionAroundDetection(td_pred.x)
         
-        
-        # add detections (objects, not just coords) to trajectory detections set (for intersections with other trajectories)
-        self.D.update(next_dets)
-
+        add_estimate = True # if this is true, then estimate next value with method, else add detection with posiiton of last detection and velocity 0 (as if it did not move)
         if(len(next_dets) == 0): # hole
-            self.holes = self.holes + 1
-        
-
-        # # 3. estimate next detection: weighted mean of detections
-        td_next, _ = self.detectionSpace.estimateNext2(td_current, td_pred, next_dets, next_probs, dt=dt)
-        
+            if(self.holes_ref == 0): # set holes_ref for reference to determine relative holes
+                self.holes_ref = self.holes
             
-        # # 4. add calculated estimate to list
+            self.holes = self.holes + 1
+            
+            # handle case for consecutive holes:
+            if(n_empty != -1):
+                add_estimate = False
+                pass
+            # else: pass
+        else: # has detections
+            # add detections (objects, not just coords) to trajectory detections set (for intersections with other trajectories)
+            self.D.update(next_dets)
+            self.holes_ref = 0 # reset holes_ref (logic in if block needs this)
+        
+        # might not need to add it (because)
+        td_next = TDet(td_current.x, td_pred.t, 0, td_current.theta)
+        # d_t1 = TDet(x_t1,t_i1,v_t1,theta_t1) # next detection, it should probably be something else
+        if(add_estimate):
+            # # 3. estimate next detection: weighted mean of detections
+            td_next, _ = self.detectionSpace.estimateNext2(td_current, td_pred, next_dets, next_probs, dt=dt)
+    
+        # # 4. add calculated estimate to list (trajectory)
         self.X.append(td_next)
+
         if(debug):
             print("this is extend:")
             print(td_current)

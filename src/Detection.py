@@ -11,6 +11,13 @@ class Detection:
             self.bb = (0,0,0,0)
         self.t = t
 
+    # equals: compares detections based on coordinates and time
+    def equalsCoordsTime(self, d2):
+        coordsEq = (self.x[0] == d2.x[0]) and (self.x[1] == d2.x[1])
+        timeEq = (self.t == d2.t)
+        return (coordsEq and timeEq)
+        # return (coordsEq)
+
     def __str__(self):
         return "d{x="+str(self.x)+",t="+str(self.t)+"}"
     

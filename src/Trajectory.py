@@ -2,6 +2,7 @@ from __future__ import annotations # da delajo tut type hint-i znotraj istega cl
 import numpy as np
 from Detection import Detection, TDet
 import math
+from helper_func import detSet2map # helper functions
 
 # to avoid cyclic import (detection space imports trajectory, trajectory imports detection space)
 from typing import TYPE_CHECKING
@@ -28,7 +29,7 @@ class Trajectory:
         self.X = [ ] # trajectory points ("trajectory" detections)
         self.holes = 0 # counter: how many trajectory points have been added considering only estimate of next detection
         self.holes_ref = 0 # holes reference: used to calculate relative number of holes (set to self.holes first, then calculate difference) (used in extend)
-        self.S = 0 # score/support of the trajectory
+        self.S = 0 # score/support of the trajectory (IS SET/UPDATED IN DetectionSpace.buildQBPMatrix() METHOD)
         self.D = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
 
     # method estimates next position based on current position, velocity and orientation (theta)
@@ -238,9 +239,61 @@ class Trajectory:
             print("next: ", td_next)
             print(self.X)
 
+    # method checks if trajectories is made from same points (some kind of equals)
+    def basedOnSameDetections(self, t2: Trajectory) -> bool:
+        return self.D == t2.D # is this equals?
+    
+    # equals2: check if it is based on same points AND if it has same score.
+    # basically: IF it has greater score, returns false, otherwise, true
+    # also compares trajectory scores - use case: if every trajectory is tested against every other in same list,
+    # only ones with higher score will survive
+    # WARNING: is kinda slow (because of getScoreUnbalanced (*2))
+    def equalsDetScore(self, t2: Trajectory) -> bool:
+        if(self.basedOnSameDetections(t2)):
+            if(self.getScoreUnbalanced() <= t2.getScoreUnbalanced()): 
+                return True
+            # return self.equalsTrajectory(t2)
+        return False
+    
+    # compares trajectory path (TDets)
+    def equalsTrajectory(self, t2: Trajectory) -> bool:
+        if(len(self.X) == len(t2.X)):
+            i = 0
+            while(i < len(self.X)):
+                tdet1: TDet = self.X[i]
+                tdet2: TDet = t2.X[i]
+                if(not tdet1.equalsCoordsTime(tdet2)):
+                    return False
+                i = i+1
+            return True
+        else:
+            return False
+    
+    # calculates unbalanced score of trajectory (should be used only for comparison of two trajectories, not for qbp matrix calculation)
+    # (almost) duplicate of first part of DetectionSpace.buildQBPMatrix (for merit term calculation)
+    def getScoreUnbalanced(self):
+        q_ii = 0
+        S_err = 0
+        e1,e2=1,1
+            
+        dets_in_tr = self.D # detections, that are part of trajectory (this is set)
+        dets_in_tr_map = detSet2map(dets_in_tr) # (this is map of ^)
+
+        for dets_i in dets_in_tr_map:
+            dets = dets_in_tr_map[dets_i]
+            g_k = self.g_k(dets)
+            if(g_k is None): # handled case (see method g_k)
+                continue
+            # add to sum:
+            S_err = S_err + ((1.0 - e2) + e2*g_k)
+
+        # 2. add holes (S_model)
+        q_ii = q_ii - e1*self.holes + S_err
+        return q_ii
+        
 
     def __str__(self):
-        return "{t"+str(self.id)+", len="+str(len(self.X))+"}"
+        return "{t"+str(self.id)+", len="+str(len(self.X))+", S="+str(int(self.S))+"}"
 
     def __repr__(self):
         return self.__str__()

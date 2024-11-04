@@ -9,6 +9,11 @@ import numpy as np
 
 DATA_ROOT = "../data/"
 FRAMES_PATH = "frames/LaSOT_bird-2/color/"
+DRAW_DETS=False
+MAIN_DEB=False
+E1,E2 =  2.3,0.1
+# E1,E2 =  1.2,0.1
+
 
 # testing trajectories:
 t1 = [
@@ -134,7 +139,7 @@ t3_b = [
 # combination of building matrix and selection of trajectories
 def selectBest(tr: list, dspace: DetectionSpace, debug = False) -> list:
     print("building Q")
-    Q = dspace.buildQBPMatrix(tr, 1.2,0.1)
+    Q = dspace.buildQBPMatrix(tr, E1, E2)
     if(debug):
         print(Q)
     print("solving")
@@ -145,21 +150,23 @@ def selectBest(tr: list, dspace: DetectionSpace, debug = False) -> list:
     return v
 
 # function returns list of only those trajectories, that are selected
-def getSelectedNvisualize(tr: list[Trajectory], v: list, dspace:DetectionSpace, debug=False, separately=False) -> list:
+def getSelectedNvisualize(tr: list[Trajectory], v: list[int], dspace:DetectionSpace, debug=False, separately=False) -> list:
     # draw them
     tr_temp = [] # temporary tr (to store only those, that are selected)
     for i in range(len(tr)):
+        # print("trajectory: ", tr[i].id," - ", tr[i].holes_ref)
         if(debug):
             print(i, end= ", ", flush=True)
-        if(v[0][i] != 0):
+        # if((v[0][i] != 0) and (tr[i].holes_ref <= 15)):
+        if((v[i] != 0) and (tr[i].holes_ref <= 15)):
             if(separately):
                 dspace.clearSpace()
             tr[i].drawToSpace()
             if(separately):
-                dspace.showSpace()
+                dspace.showSpace(draw_dets=DRAW_DETS)
             tr_temp.append(tr[i])
     if(not separately):
-        dspace.showSpace()
+        dspace.showSpace(draw_dets=DRAW_DETS)
     if(debug):
         print()
     return tr_temp
@@ -169,6 +176,34 @@ def getFrameAtI(i: int, path=FRAMES_PATH):
     frame_i = f'{i:08}'
     frame = cv.imread(DATA_ROOT+path+str(frame_i)+".jpg")
     return frame
+
+def dropRedundant(tr: list[Trajectory], debug=False) -> list[Trajectory]:
+    tr_new: list[Trajectory] = []
+    i = 0 # current trajectory
+    while(i < len(tr)):
+        j = 0 # comparing to trajectories at j
+        add = True
+        while(j < i):
+            # if is based on same detections, then do not add
+            # if(tr[i].basedOnSameDetections(tr[j])):
+            if(tr[i].equalsDetScore(tr[j])):
+                if(debug):
+                    print(tr[i], "("+str(i)+")", " is based on same as: ", tr[j], "("+str(j)+")")
+                add = False
+                break
+            j = j+1
+        if(add):
+            tr_new.append(tr[i])
+        i = i+1
+    return tr_new
+
+# similar as dropRedunant, but checks only trajectory tr1 against trajectories in list (returns bool)
+def checkIfRedundant(tr_list: list[Trajectory], tr:Trajectory) -> bool:
+    for t in tr_list:
+        if(tr.equalsDetScore(t)):
+            return True
+    return False
+
 
 # breakpoint function: stop and wait for keyboard interrupt
 def stopNwaitForKI():
@@ -191,6 +226,7 @@ def main():
     n = 20
     n_res = len(D13) - n
     tr: list[Trajectory] = []
+    n_solve = 20
     # ------------------------------
     
     t_global = 1
@@ -227,10 +263,13 @@ def main():
         new_tr.build()
         tr.append(new_tr)
     print(len(tr))
+
+    # drop redunant trajectories (ones that use same detections and have lower score than others with same detections)
+    tr = dropRedundant(tr, debug=True) # kinda slow, but helps
     
     # choose best trajectories and draw them:
     v = selectBest(tr, dspace, True)
-    tr_temp = getSelectedNvisualize(tr, v, dspace, True, True)
+    tr_temp = getSelectedNvisualize(tr, v[0], dspace, True, True)
     
     # keep only selected (only in init phase)
     tr = tr_temp
@@ -240,7 +279,7 @@ def main():
     
     # EXTEND (step):
     dspace.clearSpace()
-    dspace.showSpace()
+    dspace.showSpace(draw_dets=DRAW_DETS)
     print("next time instant: ",t_global)
 
     
@@ -253,27 +292,43 @@ def main():
 
 
         # 1. get detections in current frame
-        dspace.D.append(D13[t_global])
+        latest_dets = D13[t_global]
+        dspace.D.append(latest_dets)
+
+        # print(latest_dets)
+
         
-        # 2. try to extend existing trajectories and for every new detection, start trajectory
+        
+        # 2. try to extend existing trajectories
         dspace.clearSpace()
         for t in tr:
             t.extend(n_empty=1)
-        # dspace.showSpace()
+        # dspace.showSpace(draw_dets=DRAW_DETS)
         # dspace.clearSpace()
         for t in tr:
             t.drawToSpace()
-        dspace.showSpace()
+        dspace.showSpace(draw_dets=DRAW_DETS)
+
+        # 3. for every new detection, start new trajectory:
+        for d in latest_dets:
+            t_new_det = Trajectory(d, dspace)
+            t_new_det.build()
+            # check if redundant:
+            if(not checkIfRedundant(tr, t_new_det)): # if it is not redundant, then add it, otherwise do not add
+                tr.append(t_new_det)
+            
+        
 
 
-        # 3. trajectory pruning: if trajectory inactive*, remove it
+        # 4. trajectory pruning: if trajectory inactive*, remove it
         # * inactive, if not updated for 10 consecutive frames
         
-        # on every 50-th frame, do hypothesis selection again:
+        # on every n_solve-th frame, do hypothesis selection again:
+        # [TODO]: is it still necessary?
         print(i)
-        if(i%50 == 0):
+        if(i%n_solve == 0):
             v = selectBest(tr, dspace, debug=True)
-            tr_temp = getSelectedNvisualize(tr, v, dspace, debug=True)
+            tr_temp = getSelectedNvisualize(tr, v[0], dspace, debug=True)
 
             # keep only selected (only for testing purposes)
             tr = tr_temp
@@ -284,6 +339,84 @@ def main():
         if(i == 190):
             stopNwaitForKI()
     # END EXTEND
+
+# debug main:
+def main_d():
+    print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
+
+    # INIT:
+    # get through first n frames and initiate (hopefully) strong trajectories
+
+    # init variables used in process
+    D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
+    t_global = 0 # current time (frame)
+    n = 30
+    n_res = len(D13) - n
+    tr: list[Trajectory] = []
+    n_solve = 20
+    # ------------------------------
+    
+    t_global = 1
+    frame = getFrameAtI(t_global)
+    h,w,_ = np.shape(frame)
+    dspace = DetectionSpace(h,w)
+    dspace.map = frame
+    dspace.D.append([]) # skip zero, because frames are read from 1 on
+    # dspace.D = D13[1:2]
+    print("init dspace: ", dspace.D)
+    
+    
+    # append detections
+    for i in range(1,n):
+        dspace.D.append(D13[i])
+        t_global = t_global + 1
+    
+    # set last frame
+    frame = getFrameAtI(n-1)
+    dspace.lastFrame = frame.copy()
+    dspace.map = frame
+
+    # build trajectories from all detectinos
+    # 1. get list of all detections
+    det_list = []
+    for dl in D13[1:n]:
+        for d in dl:
+            det_list.append(d)
+    
+    # 2. build them
+    for i in range(0,len(det_list), 1):
+        d = det_list[i]
+        new_tr = Trajectory(d, dspace)
+        new_tr.build()
+        tr.append(new_tr)
+    print(len(tr))
+
+    # tr=np.array(tr)[[2,4,30,38,55,56]] # d=54.19555
+
+    # print(tr[[0,1]], "has same dets? ", tr[0].basedOnSameDetections(tr[1]))
+    # print(tr[[0,2]], "has same dets? ", tr[0].basedOnSameDetections(tr[2]))
+
+
+    # tr = list(tr)
+    
+    # choose best trajectories and draw them:
+    # v = selectBest(tr, dspace, True)
+    tr = dropRedundant(tr, debug=True) # kinda slow, but helps
+    # tr=np.array(tr)[[8,10,18,19,21]] # d=54.19555
+    # tr=np.array(tr)[[19,21]] # d=54.19555
+    v = selectBest(tr, dspace, True)
+    # v = np.ones(np.shape(v[0])) # select all
+    tr_temp = getSelectedNvisualize(tr, v[0], dspace, True, True)
+    
+    # keep only selected (only in init phase)
+    # tr = tr_temp
+    # print(tr)
+    # print(tr_temp)
+    # for t in tr:
+    #     print(t.id, ": ", t.D, " ... ")
+    # END INIT
+
+    
 
     
 
@@ -340,7 +473,7 @@ def main():
     #     if(v[0][i] != 0):
     #         dspace.clearSpace()
     #         tr[i].drawToSpace()
-    #         dspace.showSpace()
+    #         dspace.showSpace(draw_dets=DRAW_DETS)
     # print()
 
 
@@ -397,13 +530,13 @@ def main():
 #     for i in range(len(tr)):
 #         if(v[0][i] == 1):
 #             tr[i].drawToSpace()
-#             dspace.showSpace([255,255,255])
+#             dspace.showSpace(draw_dets=DRAW_DETS[255,255,255])
 #             dspace.clearSpace()
         
 
     # --------
         
-    # dspace.showSpace([255,255,255])
+    # dspace.showSpace(draw_dets=DRAW_DETS[255,255,255])
 
 
 # def main():
@@ -496,7 +629,7 @@ def main():
 #     # th1.drawToSpace()
 
     
-#     dspace.showSpace()
+#     dspace.showSpace(draw_dets=DRAW_DETS)
 
 
 # def main():
@@ -555,10 +688,13 @@ def main():
 #     print(v)
 #     # --------
         
-#     dspace.showSpace([255,255,255])
+#     dspace.showSpace(draw_dets=DRAW_DETS[255,255,255])
 
 
 
 
 if __name__ == "__main__":
-    main()
+    if(MAIN_DEB):
+        main_d()
+    else:
+        main()

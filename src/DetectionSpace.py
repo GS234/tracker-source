@@ -18,6 +18,7 @@ class DetectionSpace:
         # self.map = np.zeros((n,n)).astype(np.float32) # init empty map (old way)
         self.lastFrame = np.zeros((h,w,3)).astype(np.uint8)
         self.map = np.zeros((h,w,3)).astype(np.uint8) # init empty map
+        self.exit_zone = 5 # offset from edge
         self.hw = (h,w) # map size (dimensions)
         self.window_name = "detection space"
         self.TR = [] # array for storing trajectories
@@ -97,10 +98,20 @@ class DetectionSpace:
     # ----------------------------------------------------------------------------------------
     
 
-    def showSpace(self, det_color=[0,0,0]):
+    def showSpace(self, det_color=[0,0,0], draw_dets=True):
+        # draw exit zone (border)
+        off = self.exit_zone
+        exit_zone_color=[0,255,255]
+        ul,bl,ur,br = (off,off),(off,self.hw[0]-off),(self.hw[1]-off, off),(self.hw[1]-off, self.hw[0]-off)
+        self.drawLine(ul,bl,color=exit_zone_color)
+        self.drawLine(ul,ur,color=exit_zone_color)
+        self.drawLine(ur,br,color=exit_zone_color)
+        self.drawLine(bl,br,color=exit_zone_color)
+
         if(self.D):
-            for d in self.D:
-                detections2map(d, self.map, color=det_color)
+            if(draw_dets):
+                for d in self.D:
+                    detections2map(d, self.map, color=det_color)
             last_dets = self.D[-1]
             
             # print(last_dets)
@@ -362,6 +373,7 @@ class DetectionSpace:
             
 
             Q_ii.append(q_ii)
+            tr.S = q_ii # set/update trajectory score
 
         Q = np.diag(Q_ii) # make diagonal matrix
         

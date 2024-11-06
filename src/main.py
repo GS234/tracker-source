@@ -11,6 +11,9 @@ DATA_ROOT = "../data/"
 FRAMES_PATH = "frames/LaSOT_bird-2/color/"
 DRAW_DETS=False
 MAIN_DEB=False
+EXT_THR=20 # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory)
+UNSELECTED_STRIKE_MAX=5 # maximum number of times that trajectory is not selected but included in set
+
 E1,E2 =  2.3,0.1
 # E1,E2 =  1.2,0.1
 
@@ -161,10 +164,14 @@ def getSelectedNvisualize(tr: list[Trajectory], v: list[int], dspace:DetectionSp
         if((v[i] != 0) and (tr[i].holes_ref <= 15)):
             if(separately):
                 dspace.clearSpace()
-            tr[i].drawToSpace()
+            tr[i].drawToSpace(color=[255,255,0])
             if(separately):
                 dspace.showSpace(draw_dets=DRAW_DETS)
+            tr[i].not_selected_strike = 0 # reset not selected strike if is selected
             tr_temp.append(tr[i])
+        else:
+            tr[i].not_selected_strike = tr[i].not_selected_strike + 1 # increase not selected strike
+            
     if(not separately):
         dspace.showSpace(draw_dets=DRAW_DETS)
     if(debug):
@@ -324,20 +331,36 @@ def main():
         # * inactive, if not updated for 10 consecutive frames
         
         # on every n_solve-th frame, do hypothesis selection again:
-        # [TODO]: is it still necessary?
         print(i)
         if(i%n_solve == 0):
             v = selectBest(tr, dspace, debug=True)
-            tr_temp = getSelectedNvisualize(tr, v[0], dspace, debug=True)
+            tr_temp = []
+            t_i = 0
+            for t in tr:
+                if(v[0][t_i] == 1):
+                    print("-> ", end="", flush=True)
+                print(t," holes: ", t.holes_ref, " nss: ", t.not_selected_strike)
+                
+                if(t.holes_ref < EXT_THR):
+                    if((t.S >= 0) or ((t.S < 0) and (-t.S <= len(t.X))) ):
+                        if(t.not_selected_strike > UNSELECTED_STRIKE_MAX):
+                            t.disable_grow = True
+                        tr_temp.append(t)
+                
+                t_i = t_i+1
+
+            getSelectedNvisualize(tr, v[0], dspace, separately=True, debug=True)
+
+            tr = tr_temp
 
             # keep only selected (only for testing purposes)
-            tr = tr_temp
+            # tr = tr_temp
 
         t_global = t_global + 1
 
         # 195
-        if(i == 190):
-            stopNwaitForKI()
+        # if(i == 190):
+        #     stopNwaitForKI()
     # END EXTEND
 
 # debug main:

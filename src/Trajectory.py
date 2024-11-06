@@ -29,6 +29,10 @@ class Trajectory:
         self.X = [ ] # trajectory points ("trajectory" detections)
         self.holes = 0 # counter: how many trajectory points have been added considering only estimate of next detection
         self.holes_ref = 0 # holes reference: used to calculate relative number of holes (set to self.holes first, then calculate difference) (used in extend)
+        
+        self.not_selected_strike = 0 # number of times the trajectory has not been selected but is in hypothesis set
+        self.disable_grow = False # flag: disable trajectory to grow
+
         self.S = 0 # score/support of the trajectory (IS SET/UPDATED IN DetectionSpace.buildQBPMatrix() METHOD)
         self.D = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
 
@@ -115,7 +119,9 @@ class Trajectory:
         
 
     # method draws trajectory to detection space
-    def drawToSpace(self):
+    def drawToSpace(self, color=None):
+        if(color is None):
+            color = self.color
         x_brightness = 1.0
         if(len(self.X) > 0): # if has one
             self.detectionSpace.drawX(self.X[0].x, x_brightness)
@@ -123,7 +129,7 @@ class Trajectory:
             for i in range(len(self.X)-1):
                 xi = self.X[i].x
                 xi1 = self.X[i+1].x
-                self.detectionSpace.drawLine(xi,xi1,self.color)
+                self.detectionSpace.drawLine(xi,xi1,color)
                 # self.detectionSpace.drawDsearchRegionAroundDetection(xi1)
             self.detectionSpace.drawX(self.X[-1].x, x_brightness)
     
@@ -190,6 +196,8 @@ class Trajectory:
     # method is used to extend existing trajectory to time t+1 (effectively: one step of connect)
     # [TODO] - time? need current time (for reference); further testing needed!
     def extend(self, debug=False, n_empty=-1):
+        if(self.disable_grow):
+            return
         # 1. find detections around last detection
         # 2. estimate, add to trajectory, ...
         dt = 1
@@ -250,7 +258,7 @@ class Trajectory:
     # WARNING: is kinda slow (because of getScoreUnbalanced (*2))
     def equalsDetScore(self, t2: Trajectory) -> bool:
         if(self.basedOnSameDetections(t2)):
-            if(self.getScoreUnbalanced() <= t2.getScoreUnbalanced()): 
+            if(int(self.getScoreUnbalanced()) <= int(t2.getScoreUnbalanced())): # int comparison: might be problematic [TODO]
                 return True
             # return self.equalsTrajectory(t2)
         return False
@@ -293,7 +301,10 @@ class Trajectory:
         
 
     def __str__(self):
-        return "{t"+str(self.id)+", len="+str(len(self.X))+", S="+str(int(self.S))+"}"
+        disabled = ""
+        if(self.disable_grow):
+            disabled = " (d)"
+        return "{t"+str(self.id)+", len="+str(len(self.X))+", S="+str(int(self.S))+disabled+"}"
 
     def __repr__(self):
         return self.__str__()

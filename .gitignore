@@ -3,3 +3,4 @@ src/__pycache__
 RAFT
 data
 src/other/estimates
+src/debug_data

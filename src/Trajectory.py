@@ -256,9 +256,16 @@ class Trajectory:
     # also compares trajectory scores - use case: if every trajectory is tested against every other in same list,
     # only ones with higher score will survive
     # WARNING: is kinda slow (because of getScoreUnbalanced (*2))
-    def equalsDetScore(self, t2: Trajectory) -> bool:
+    def equalsDetScore(self, t2: Trajectory, recalculate=True) -> bool:
         if(self.basedOnSameDetections(t2)):
-            if(int(self.getScoreUnbalanced()) <= int(t2.getScoreUnbalanced())): # int comparison: might be problematic [TODO]
+            t1_s = int(self.S)
+            t2_s = int(t2.S)
+
+            if(recalculate):
+                t1_s = int(self.getScoreUnbalanced())
+                t2_s = int(t2.getScoreUnbalanced())
+
+            if(t1_s <= t2_s): # int comparison: might be problematic [TODO]
                 return True
             # return self.equalsTrajectory(t2)
         return False
@@ -298,6 +305,57 @@ class Trajectory:
         # 2. add holes (S_model)
         q_ii = q_ii - e1*self.holes + S_err
         return q_ii
+    
+    # !! METHODS ARE MAINLY USED TO BUILD QBP MATRIX
+    # calculate score of trajectory (like ^, also use balancing constants e1/e2)
+    def getScore(self, e1: float = 1.0, e2: float = 1.0) -> float:
+        q_ii = 0 # merit term
+        S_err = 0
+        
+        dets_in_tr = self.D # detections, that are part of trajectory (this is set)
+        dets_in_tr_map = detSet2map(dets_in_tr) # (this is map of ^)
+
+        # 1. calculate model error
+        for dets_i in dets_in_tr_map:
+            dets = dets_in_tr_map[dets_i]
+            g_k = self.g_k(dets)
+            if(g_k is None): # handled case (see method g_k)
+                continue
+            # add to sum:
+            S_err = S_err + ((1.0 - e2) + e2*g_k)
+        
+        # 2. add holes (S_model) (model cost)
+        q_ii = q_ii - e1*self.holes + S_err
+        self.S = q_ii # set score
+        return q_ii
+    
+
+    # [WARN] score of two trajectories must already be calculated for this function to work properly
+    def getInteractionCost(self, other_t: Trajectory, e1: float = 1.0, e2: float = 1.0):
+        # 1. get points in intersection
+        det_intersect = self.D & other_t.D
+        det_intersect_map = detSet2map(det_intersect)
+
+        # choose weaker hypothesis
+        tr_l = other_t # assume weaker is the other
+        # if(Q_ii[n] > Q_ii[m]):
+        if(other_t.S > self.S):
+            tr_l = self # change if necessary
+        # print(other_t.S, self.S, "selected: ", tr_l.S)
+
+        # 2. calculate g of intersecting points (with D of the weaker hypothesis)
+        q_ij = 0
+        S_err = 0
+        for dets_i in det_intersect_map:
+            dets = det_intersect_map[dets_i]
+            g_kl = tr_l.g_k(dets)
+            if(g_kl is None): # handled case (see method g_k)
+                continue
+            # add to sum:
+            S_err = S_err + ((1-e2) + e2*g_kl)
+
+        q_ij = S_err * (-0.5)
+        return q_ij
         
 
     def __str__(self):

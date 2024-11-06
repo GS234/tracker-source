@@ -4,15 +4,17 @@ from Trajectory import Trajectory
 from Detection import Detection
 import cv2 as cv
 import numpy as np
+import copy # for deepcopy (visualization purposes)
+import pickle
 # np.set_printoptions(threshold=np.inf)
-
 
 DATA_ROOT = "../data/"
 FRAMES_PATH = "frames/LaSOT_bird-2/color/"
 DRAW_DETS=False
-MAIN_DEB=False
+MAIN_DEB=True
 EXT_THR=20 # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory)
 UNSELECTED_STRIKE_MAX=5 # maximum number of times that trajectory is not selected but included in set
+SAVE_TRAJECTORIES=True # switch to save trajectories on every selection step for vizualization/debug purposes
 
 E1,E2 =  2.3,0.1
 # E1,E2 =  1.2,0.1
@@ -140,9 +142,10 @@ t3_b = [
 # some main-specific functions:
 
 # combination of building matrix and selection of trajectories
-def selectBest(tr: list, dspace: DetectionSpace, debug = False) -> list:
+def selectBest(tr: list, dspace: DetectionSpace, debug = False, recalculate_scores=True) -> list:
     print("building Q")
-    Q = dspace.buildQBPMatrix(tr, E1, E2)
+    # Q = dspace.buildQBPMatrix(tr, E1, E2)
+    Q = dspace.buildQBPMatrix2(tr, E1, E2, recalculate_scores=recalculate_scores)
     if(debug):
         print(Q)
     print("solving")
@@ -184,7 +187,7 @@ def getFrameAtI(i: int, path=FRAMES_PATH):
     frame = cv.imread(DATA_ROOT+path+str(frame_i)+".jpg")
     return frame
 
-def dropRedundant(tr: list[Trajectory], debug=False) -> list[Trajectory]:
+def dropRedundant(tr: list[Trajectory], debug=False, recalculate=True) -> list[Trajectory]:
     tr_new: list[Trajectory] = []
     i = 0 # current trajectory
     while(i < len(tr)):
@@ -193,9 +196,9 @@ def dropRedundant(tr: list[Trajectory], debug=False) -> list[Trajectory]:
         while(j < i):
             # if is based on same detections, then do not add
             # if(tr[i].basedOnSameDetections(tr[j])):
-            if(tr[i].equalsDetScore(tr[j])):
+            if(tr[i].equalsDetScore(tr[j],recalculate=recalculate)):
                 if(debug):
-                    print(tr[i], "("+str(i)+")", " is based on same as: ", tr[j], "("+str(j)+")")
+                    print(tr[i], "("+str(i)+")", " is based on same as: ", tr[j], "("+str(j)+"). NOT ADDING: ", tr[i])
                 add = False
                 break
             j = j+1
@@ -205,9 +208,11 @@ def dropRedundant(tr: list[Trajectory], debug=False) -> list[Trajectory]:
     return tr_new
 
 # similar as dropRedunant, but checks only trajectory tr1 against trajectories in list (returns bool)
-def checkIfRedundant(tr_list: list[Trajectory], tr:Trajectory) -> bool:
+def checkIfRedundant(tr_list: list[Trajectory], tr:Trajectory, recalculate=True, debug=False) -> bool:
     for t in tr_list:
-        if(tr.equalsDetScore(t)):
+        if(tr.equalsDetScore(t, recalculate=recalculate)):
+            if(debug):
+                    print(tr, " is based on same as: ", t, "). NOT ADDING: ", tr)
             return True
     return False
 
@@ -266,23 +271,23 @@ def main():
     # 2. build them
     for i in range(0,len(det_list), 1):
         d = det_list[i]
-        new_tr = Trajectory(d, dspace)
+        new_tr: Trajectory = Trajectory(d, dspace)
         new_tr.build()
+        new_tr.getScore(E1,E2) # calculate score of trajectory (Trajectory.S is set) (merit term used in matrix)
         tr.append(new_tr)
     print(len(tr))
 
     # drop redunant trajectories (ones that use same detections and have lower score than others with same detections)
-    tr = dropRedundant(tr, debug=True) # kinda slow, but helps
+    tr = dropRedundant(tr, debug=True, recalculate=False) # no need to recalculate, because we already have calculated scores
     
     # choose best trajectories and draw them:
-    v = selectBest(tr, dspace, True)
+    v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # already have scores
     tr_temp = getSelectedNvisualize(tr, v[0], dspace, True, True)
     
     # keep only selected (only in init phase)
     tr = tr_temp
     print(tr)
     # END INIT
-
     
     # EXTEND (step):
     dspace.clearSpace()
@@ -290,82 +295,99 @@ def main():
     print("next time instant: ",t_global)
 
     
-    # on every new frame, do:
-    for i in range(n_res):
-        # 0. set new frame
-        frame = getFrameAtI(t_global)
-        dspace.lastFrame = frame.copy()
-        dspace.map = frame
+    try:
+        tr_save = copy.deepcopy(tr) # init trajectories to save
+        # on every new frame, do:
+        for i in range(n_res):
+            # 0. set new frame
+            frame = getFrameAtI(t_global)
+            dspace.lastFrame = frame.copy()
+            dspace.map = frame
 
 
-        # 1. get detections in current frame
-        latest_dets = D13[t_global]
-        dspace.D.append(latest_dets)
+            # 1. get detections in current frame
+            latest_dets = D13[t_global]
+            dspace.D.append(latest_dets)
 
-        # print(latest_dets)
-
-        
-        
-        # 2. try to extend existing trajectories
-        dspace.clearSpace()
-        for t in tr:
-            t.extend(n_empty=1)
-        # dspace.showSpace(draw_dets=DRAW_DETS)
-        # dspace.clearSpace()
-        for t in tr:
-            t.drawToSpace()
-        dspace.showSpace(draw_dets=DRAW_DETS)
-
-        # 3. for every new detection, start new trajectory:
-        for d in latest_dets:
-            t_new_det = Trajectory(d, dspace)
-            t_new_det.build()
-            # check if redundant:
-            if(not checkIfRedundant(tr, t_new_det)): # if it is not redundant, then add it, otherwise do not add
-                tr.append(t_new_det)
-            
-        
+            # print(latest_dets)
 
 
-        # 4. trajectory pruning: if trajectory inactive*, remove it
-        # * inactive, if not updated for 10 consecutive frames
-        
-        # on every n_solve-th frame, do hypothesis selection again:
-        print(i)
-        if(i%n_solve == 0):
-            v = selectBest(tr, dspace, debug=True)
-            tr_temp = []
-            t_i = 0
+
+            # 2. try to extend existing trajectories
+            dspace.clearSpace()
             for t in tr:
-                if(v[0][t_i] == 1):
-                    print("-> ", end="", flush=True)
-                print(t," holes: ", t.holes_ref, " nss: ", t.not_selected_strike)
-                
-                if(t.holes_ref < EXT_THR):
-                    if((t.S >= 0) or ((t.S < 0) and (-t.S <= len(t.X))) ):
-                        if(t.not_selected_strike > UNSELECTED_STRIKE_MAX):
-                            t.disable_grow = True
-                        tr_temp.append(t)
-                
-                t_i = t_i+1
+                t.extend(n_empty=1)
+                t.getScore(E1,E2) # calculate score of existing trajectories (extended/extrapolated)
+            # dspace.showSpace(draw_dets=DRAW_DETS)
+            # dspace.clearSpace()
+            for t in tr:
+                t.drawToSpace()
+            dspace.showSpace(draw_dets=DRAW_DETS)
 
-            getSelectedNvisualize(tr, v[0], dspace, separately=True, debug=True)
+            # 3. for every new detection, start new trajectory:
+            for d in latest_dets:
+                tr_new_det = Trajectory(d, dspace)
+                tr_new_det.build()
+                tr_new_det.getScore(E1,E2) # calculate score of new trajectories
+                # check if redundant:
+                if(not checkIfRedundant(tr, tr_new_det, recalculate=False, debug=True)): # if it is not redundant, then add it, otherwise do not add
+                    tr.append(tr_new_det)
 
-            tr = tr_temp
 
-            # keep only selected (only for testing purposes)
-            # tr = tr_temp
 
-        t_global = t_global + 1
 
-        # 195
-        # if(i == 190):
-        #     stopNwaitForKI()
+            # 4. trajectory pruning: if trajectory inactive*, remove it
+            # * inactive, if not updated for 10 consecutive frames
+
+            # on every n_solve-th frame, do hypothesis selection again:
+            print(i)
+            if(i%n_solve == 0):
+                if(SAVE_TRAJECTORIES):
+                    tr_save.append(copy.deepcopy(tr))
+
+                v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # no need to recalculate, because they are updated
+                tr_temp = []
+                t_i = 0
+                for t in tr:
+                    if(v[0][t_i] == 1):
+                        print("-> ", end="", flush=True)
+                    print(t," holes: ", t.holes_ref, " nss: ", t.not_selected_strike)
+
+                    if(t.holes_ref < EXT_THR):
+                        if((t.S >= 0) or ((t.S < 0) and (-t.S <= len(t.X))) ):
+                            if(t.not_selected_strike > UNSELECTED_STRIKE_MAX):
+                                t.disable_grow = True
+                            tr_temp.append(t)
+
+                    t_i = t_i+1
+
+                getSelectedNvisualize(tr, v[0], dspace, separately=True, debug=True)
+
+                tr = tr_temp
+
+                # keep only selected (only for testing purposes)
+                # tr = tr_temp
+
+            t_global = t_global + 1
+
+            # 195
+            # if(i == 190):
+            #     stopNwaitForKI()
+    except KeyboardInterrupt:
+        print("abort")
+        with open('hypotheses.p', 'wb') as fp: # fp: file pointer?
+            pickle.dump(tr_save, fp)
     # END EXTEND
 
 # debug main:
 def main_d():
     print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
+    tr_list = []
+    with open('hypotheses.p', 'rb') as fp: # fp: file pointer?
+            tr_list = pickle.load(fp)
+    print(tr_list)
+            
+    return
 
     # INIT:
     # get through first n frames and initiate (hopefully) strong trajectories
@@ -424,12 +446,20 @@ def main_d():
     
     # choose best trajectories and draw them:
     # v = selectBest(tr, dspace, True)
-    tr = dropRedundant(tr, debug=True) # kinda slow, but helps
+    tr = dropRedundant(tr, debug=False) # kinda slow, but helps
     # tr=np.array(tr)[[8,10,18,19,21]] # d=54.19555
     # tr=np.array(tr)[[19,21]] # d=54.19555
-    v = selectBest(tr, dspace, True)
-    # v = np.ones(np.shape(v[0])) # select all
-    tr_temp = getSelectedNvisualize(tr, v[0], dspace, True, True)
+    
+    Q1 = dspace.buildQBPMatrix(tr, E1, E2)
+    Q2 = dspace.buildQBPMatrix2(tr, E1, E2)
+
+    print(Q1-Q2)
+
+
+    
+    # v = selectBest(tr, dspace, True)
+    # # v = np.ones(np.shape(v[0])) # select all
+    # tr_temp = getSelectedNvisualize(tr, v[0], dspace, True, True)
     
     # keep only selected (only in init phase)
     # tr = tr_temp

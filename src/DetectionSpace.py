@@ -346,8 +346,9 @@ class DetectionSpace:
     # method builds trajectory interatction matrix
     # [TODO] - should be tested, needs refactoring (move some things to separate methods)
     def buildQBPMatrix(self, tr_list: list[Trajectory], e1: float = 1.0, e2: float = 1.0):
+        print("this is build QBP (og)")
         # 1. calculate q_ii terms ("merit terms")
-        Q_ii = []
+        Q_ii = [] # list of q_ii (trajectory scores, "merit terms")
         for tr in tr_list:
             q_ii = 0 # merit term
             # calculate for every trajectory point in trajectory:
@@ -374,7 +375,6 @@ class DetectionSpace:
 
             Q_ii.append(q_ii)
             tr.S = q_ii # set/update trajectory score
-
         Q = np.diag(Q_ii) # make diagonal matrix
         
         
@@ -385,7 +385,7 @@ class DetectionSpace:
 
         # I miss good old for loops from java so much ...
         while( m <= (n_tr-1)):
-            n = m+1
+            n = m+1 # calculate only terms above diagonal, because Q is symmetric (Q[i,j] = Q[j,i])
             while( n <= (n_tr -1)):
                 # 1. get points in intersection
 
@@ -397,6 +397,8 @@ class DetectionSpace:
                 if(Q_ii[n] > Q_ii[m]):
                     tr_l = m
                 tr_l = tr_list[tr_l]
+
+                # print(Q_ii[n], Q_ii[m], "selected: ", tr_l.S)
 
                 # 2. calculate g of intersecting points (with D of the weaker hypothesis)
 
@@ -416,13 +418,50 @@ class DetectionSpace:
                 q_ij = S_err * (-0.5)
 
                 # 3. set q_ij term (q_ij, q_ji)
-                
+                print(q_ij, end=" ", flush=True)
+                Q[m,n] = q_ij
+                Q[n,m] = q_ij
+                n = n+1
+            m = m+1
+        print()
+
+        # print(Q)
+        return Q
+    
+    # method builds trajectory interatction matrix (same as ^, more clean)
+    # recalculate_scores: calculate merit terms again (otherwise use old ones stored in Trajectory.S)
+    def buildQBPMatrix2(self, tr_list: list[Trajectory], e1: float = 1.0, e2: float = 1.0, recalculate_scores=True):
+        print("this is build QBP 2")
+        # 1. calculate q_ii terms ("merit terms")
+        Q_ii = [] # list of q_ii (trajectory scores, "merit terms")
+        for tr in tr_list:
+            q_ii = tr.S
+            if(recalculate_scores):
+                q_ii = tr.S
+                if(not tr.disable_grow): # discontinued trajectories have same score
+                    q_ii = tr.getScore(e1,e2)
+            Q_ii.append(q_ii)
+        
+        Q = np.diag(Q_ii) # make diagonal matrix
+        
+        # 2. calculate q_ij terms (interaction terms (similar to q_ii, but only consider intersecting trajectory points))
+        n_tr = len(Q_ii)
+        m = 0 # row index
+        n = 0 # column index
+
+        # I miss good old for loops from java so much ...
+        while( m <= (n_tr-1)):
+            n = m+1 # calculate only terms above diagonal, because Q is symmetric (Q[i,j] = Q[j,i])
+            while( n <= (n_tr -1)):
+                # 1. calculate intersection cost (weaker hypothesis is detected within function)
+                q_ij = tr_list[m].getInteractionCost(tr_list[n], e1, e2)
+
+                # 2. set q_ij term (q_ij, q_ji)
                 Q[m,n] = q_ij
                 Q[n,m] = q_ij
                 n = n+1
             m = m+1
 
-        # print(Q)
         return Q
     
 
@@ -504,3 +543,85 @@ class DetectionSpace:
         print("n_iter: " + str(n_iter), " n_combinations: ", (1 << n_el)) # some stats
         # return (v_max, D_max)
         return (local_max_v, local_max_d)
+    
+
+# method builds trajectory interatction matrix - backup
+# def buildQBPMatrix(self, tr_list: list[Trajectory], e1: float = 1.0, e2: float = 1.0):
+#     # 1. calculate q_ii terms ("merit terms")
+#     Q_ii = [] # list of q_ii (trajectory scores, "merit terms")
+#     for tr in tr_list:
+#         q_ii = 0 # merit term
+#         # calculate for every trajectory point in trajectory:
+        
+#         S_err = 0
+#         # print("this is g: -->")
+        
+#         dets_in_tr = tr.D # detections, that are part of trajectory (this is set)
+#         dets_in_tr_map = detSet2map(dets_in_tr) # (this is map of ^)
+
+#         for dets_i in dets_in_tr_map:
+#             dets = dets_in_tr_map[dets_i]
+#             g_k = tr.g_k(dets)
+#             if(g_k is None): # handled case (see method g_k)
+#                 continue
+#             # add to sum:
+#             S_err = S_err + ((1.0 - e2) + e2*g_k)
+
+#         # print("<-- this is end of g")
+        
+#         # 2. add holes (S_model)
+#         q_ii = q_ii - e1*tr.holes + S_err
+        
+
+#         Q_ii.append(q_ii)
+#         tr.S = q_ii # set/update trajectory score
+
+#     Q = np.diag(Q_ii) # make diagonal matrix
+    
+    
+#     # 2. calculate q_ij terms (interaction terms (similar to q_ii, but only consider intersecting trajectory points))
+#     n_tr = len(Q_ii)
+#     m = 0 # row index
+#     n = 0 # column index
+
+#     # I miss good old for loops from java so much ...
+#     while( m <= (n_tr-1)):
+#         n = m+1 # calculate only terms above diagonal, because Q is symmetric (Q[i,j] = Q[j,i])
+#         while( n <= (n_tr -1)):
+#             # 1. get points in intersection
+
+#             det_intersect = tr_list[m].D & tr_list[n].D
+#             det_intersect_map = detSet2map(det_intersect)
+
+#             # choose weaker hypothesis
+#             tr_l = n
+#             if(Q_ii[n] > Q_ii[m]):
+#                 tr_l = m
+#             tr_l = tr_list[tr_l]
+
+#             # 2. calculate g of intersecting points (with D of the weaker hypothesis)
+
+#             q_ij = 0
+#             S_err = 0
+#             # print("this is g_k: -->")
+#             for dets_i in det_intersect_map:
+#                 dets = det_intersect_map[dets_i]
+#                 # print(det_intersect_map)
+#                 g_kl = tr_l.g_k(dets)
+#                 if(g_kl is None): # handled case (see method g_k)
+#                     continue
+#                 # add to sum:
+#                 S_err = S_err + ((1-e2) + e2*g_kl)
+#             # print("<-- end of g_k")
+
+#             q_ij = S_err * (-0.5)
+
+#             # 3. set q_ij term (q_ij, q_ji)
+            
+#             Q[m,n] = q_ij
+#             Q[n,m] = q_ij
+#             n = n+1
+#         m = m+1
+
+#     # print(Q)
+#     return Q

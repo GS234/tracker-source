@@ -12,16 +12,17 @@ S1, S2 = 15,15 # default s1,s2
 DATA_ROOT = "../data/"
 X_FFFFFF = [255,255,255]
 GREEN = [0,255,0]
+EXIT_ZONE_OFFSET = 5
 
 class DetectionSpace:
     def __init__(self, h,w, D: list = None):
         # self.map = np.zeros((n,n)).astype(np.float32) # init empty map (old way)
         self.lastFrame = np.zeros((h,w,3)).astype(np.uint8)
         self.map = np.zeros((h,w,3)).astype(np.uint8) # init empty map
-        self.exit_zone = 5 # offset from edge
+        self.exit_zone = EXIT_ZONE_OFFSET # offset from edge
         self.hw = (h,w) # map size (dimensions)
         self.window_name = "detection space"
-        self.TR = [] # array for storing trajectories
+        self.TR = [] # array for storing trajectories (unused)
         
         self.D = [] # detections (2d array, 1st dim. is time, subarrays contain detections)
         if D is not None:

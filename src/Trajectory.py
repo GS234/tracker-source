@@ -362,7 +362,7 @@ class Trajectory:
         disabled = ""
         if(self.disable_grow):
             disabled = " (d)"
-        return "{t"+str(self.id)+", len="+str(len(self.X))+", S="+str(int(self.S))+disabled+"}"
+        return "{t"+str(self.id)+", len="+str(len(self.X))+", S="+ f"{self.S:.4f}" +disabled+"}"
 
     def __repr__(self):
         return self.__str__()

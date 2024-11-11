@@ -1,4 +1,4 @@
-from helper_func import coords2det2, readDetFile2, coords2map
+from helper_func import coords2det2, readDetFile2, coords2map, readTrajectoryFile, getTrColor
 from DetectionSpace import DetectionSpace
 from Trajectory import Trajectory
 from Detection import Detection
@@ -7,14 +7,16 @@ import numpy as np
 import copy # for deepcopy (visualization purposes)
 import pickle
 # np.set_printoptions(threshold=np.inf)
+# np.set_printoptions(threshold=10)
 
 DATA_ROOT = "../data/"
 FRAMES_PATH = "frames/LaSOT_bird-2/color/"
 DRAW_DETS=False
-MAIN_DEB=True
+# MAIN_DEB=True
+MAIN_DEB=False
 EXT_THR=20 # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory)
 UNSELECTED_STRIKE_MAX=5 # maximum number of times that trajectory is not selected but included in set
-SAVE_TRAJECTORIES=True # switch to save trajectories on every selection step for vizualization/debug purposes
+SAVE_TRAJECTORIES=False # switch to save trajectories on every selection step for vizualization/debug purposes
 
 E1,E2 =  2.3,0.1
 # E1,E2 =  1.2,0.1
@@ -226,14 +228,18 @@ def stopNwaitForKI():
         print("continue")
 
 
-# main:
-def main():
-
+# function reads file with saved trajectories and displays them on frames
+def visualizeSaved():
     # INIT:
     # get through first n frames and initiate (hopefully) strong trajectories
 
     # init variables used in process
     D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
+    TR = readTrajectoryFile('debug_data/hypotheses.p')
+
+
+    # print(TR)
+
     t_global = 0 # current time (frame)
     n = 20
     n_res = len(D13) - n
@@ -261,12 +267,157 @@ def main():
     dspace.lastFrame = frame.copy()
     dspace.map = frame
 
+    tr_i = 0
+    t_global, tr = TR[tr_i] # initial trajectories
+    tr_i = tr_i + 1
+    
+    # set trajectories space pointers
+    for _,tl in TR:
+        for t in tl:
+            t.detectionSpace = dspace # pointers from objects read from picle are no longer valid
+    
+
+    # choose best trajectories and draw them:
+    v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # already have scores
+    # getSelectedNvisualize(tr, v[0], dspace, True, True)
+    # END INIT
+
+    # ONLY SELECTED
+    # selected_tr = [0:len(tr)]
+    selected_tr = list(range(len(TR)))
+    for tr_i in selected_tr:
+        t_global, tr = TR[tr_i]
+
+        if(tr_i < len(TR)):
+            # 0. set new frame
+            frame = getFrameAtI(t_global)
+            dspace.lastFrame = frame.copy()
+            dspace.map = frame
+
+            # 1. get detections in current frame
+            latest_dets = D13[t_global]
+            dspace.D.append(latest_dets)
+
+            # 2. read trajectories
+            print("-----------------> t: ", t_global, ", tr_i: ", tr_i)
+            v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # already have scores
+            # dspace.clearSpace()
+            # for ii in range(len(tr)):
+            #     if(v[0][ii] == 0):
+            #         tr[ii].color = getTrColor()
+            #         tr[ii].drawToSpace()
+            for ii in range(len(tr)):
+                if(v[0][ii] == 1):
+                    # tr[ii].color = [255,255,0]
+                    # tr[ii].drawToSpace()
+                    print("-> ",end="",flush=True)
+                print(tr[ii]," holes: ", tr[ii].holes_ref, " nss: ", tr[ii].not_selected_strike)
+            # dspace.showSpace(draw_dets=DRAW_DETS)
+            # getSelectedNvisualize(tr, v[0], dspace, True, False)
+            
+            # debug section
+            # print("--------- D --------------")
+            # if(tr_i == 5):
+            #     tr83 = tr[6]
+            #     tr84 = tr[7]
+
+            #     tr83d = tr83.D
+            #     tr84d = tr84.D
+            #     print(tr83,tr84)
+            #     print(tr83.basedOnSameDetections(tr84))
+            #     print(tr83d)
+            #     print("\n")
+            #     print(tr84d)
+            #     print("\n")
+            #     print(tr83d.difference(tr83d & tr84d))
+
+
+            # print("--------- ! --------------")
+            input("continue?")
+
+
+    # LOOP ALL:
+    # for i in range(n_res):
+    #     if(tr_i < len(TR)):
+    #         # 0. set new frame
+    #         frame = getFrameAtI(t_global)
+    #         dspace.lastFrame = frame.copy()
+    #         dspace.map = frame
+
+    #         # 1. get detections in current frame
+    #         latest_dets = D13[t_global]
+    #         dspace.D.append(latest_dets)
+
+    #         # 2. read trajectories
+    #         t_tr, tr = TR[tr_i]
+    #         if(t_tr == t_global):
+    #             print("-----------------> t: ", t_global, ", tr_i: ",tr_i)
+    #             v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # already have scores
+    #             dspace.clearSpace()
+    #             for ii in range(len(tr)):
+    #                 if(v[0][ii] == 0):
+    #                     tr[ii].color = getTrColor()
+    #                     tr[ii].drawToSpace()
+    #             for ii in range(len(tr)):
+    #                 if(v[0][ii] == 1):
+    #                     tr[ii].color = [255,255,0]
+    #                     tr[ii].drawToSpace()
+    #                     print("-> ",end="",flush=True)
+    #                 print(tr[ii]," holes: ", tr[ii].holes_ref, " nss: ", tr[ii].not_selected_strike)
+    #             dspace.showSpace(draw_dets=DRAW_DETS)
+    #             # getSelectedNvisualize(tr, v[0], dspace, True, False)
+    #             tr_i = tr_i + 1
+
+    #     t_global = t_global + 1
+
+
+
+
+# main:
+def main():
+    # INIT:
+    # get through first n frames and initiate (hopefully) strong trajectories
+
+    # init variables used in process
+    D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
+    t_global = 0 # current time (frame)
+    n = 20
+    n_res = len(D13) - n
+    tr: list[Trajectory] = []
+    n_solve = 5# 20
+    # ------------------------------
+    
+    t_global = 1
+    frame = getFrameAtI(t_global)
+    h,w,_ = np.shape(frame)
+    dspace = DetectionSpace(h,w)
+    dspace.map = frame
+    dspace.D.append([]) # skip zero, because frames are read from 1 on
+    # dspace.D = D13[1:2]
+    # print("init dspace: ", dspace.D)
+    
+    
+    # append detections
+    for i in range(1,n):
+        dspace.D.append(D13[i])
+        print(D13[i])
+        t_global = t_global + 1
+    # print("---")
+    
+    # set last frame
+    frame = getFrameAtI(n-1)
+    dspace.lastFrame = frame.copy()
+    dspace.map = frame
+
     # build trajectories from all detectinos
     # 1. get list of all detections
     det_list = []
     for dl in D13[1:n]:
+        # print(dl)
         for d in dl:
             det_list.append(d)
+
+    # return
     
     # 2. build them
     for i in range(0,len(det_list), 1):
@@ -278,7 +429,7 @@ def main():
     print(len(tr))
 
     # drop redunant trajectories (ones that use same detections and have lower score than others with same detections)
-    tr = dropRedundant(tr, debug=True, recalculate=False) # no need to recalculate, because we already have calculated scores
+    tr = dropRedundant(tr, debug=False, recalculate=False) # no need to recalculate, because we already have calculated scores
     
     # choose best trajectories and draw them:
     v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # already have scores
@@ -296,7 +447,8 @@ def main():
 
     
     try:
-        tr_save = copy.deepcopy(tr) # init trajectories to save
+        tr_save = []
+        tr_save.append((t_global-1,copy.deepcopy(tr))) # init trajectories to save
         # on every new frame, do:
         for i in range(n_res):
             # 0. set new frame
@@ -304,14 +456,11 @@ def main():
             dspace.lastFrame = frame.copy()
             dspace.map = frame
 
-
             # 1. get detections in current frame
             latest_dets = D13[t_global]
             dspace.D.append(latest_dets)
 
             # print(latest_dets)
-
-
 
             # 2. try to extend existing trajectories
             dspace.clearSpace()
@@ -330,10 +479,8 @@ def main():
                 tr_new_det.build()
                 tr_new_det.getScore(E1,E2) # calculate score of new trajectories
                 # check if redundant:
-                if(not checkIfRedundant(tr, tr_new_det, recalculate=False, debug=True)): # if it is not redundant, then add it, otherwise do not add
+                if(not checkIfRedundant(tr, tr_new_det, recalculate=False, debug=False)): # if it is not redundant, then add it, otherwise do not add
                     tr.append(tr_new_det)
-
-
 
 
             # 4. trajectory pruning: if trajectory inactive*, remove it
@@ -343,7 +490,7 @@ def main():
             print(i)
             if(i%n_solve == 0):
                 if(SAVE_TRAJECTORIES):
-                    tr_save.append(copy.deepcopy(tr))
+                    tr_save.append((t_global,copy.deepcopy(tr)))
 
                 v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # no need to recalculate, because they are updated
                 tr_temp = []
@@ -357,15 +504,18 @@ def main():
                         if((t.S >= 0) or ((t.S < 0) and (-t.S <= len(t.X))) ):
                             if(t.not_selected_strike > UNSELECTED_STRIKE_MAX):
                                 t.disable_grow = True
-                            tr_temp.append(t)
+                            # exclude discontinued trajectory from hypothesis selection
+                            else:
+                                tr_temp.append(t)
 
                     t_i = t_i+1
 
-                getSelectedNvisualize(tr, v[0], dspace, separately=True, debug=True)
-
                 tr = tr_temp
 
+
                 # keep only selected (only for testing purposes)
+                # tr_temp = getSelectedNvisualize(tr, v[0], dspace, separately=True, debug=True)
+                getSelectedNvisualize(tr, v[0], dspace, separately=True, debug=True)
                 # tr = tr_temp
 
             t_global = t_global + 1
@@ -375,18 +525,15 @@ def main():
             #     stopNwaitForKI()
     except KeyboardInterrupt:
         print("abort")
-        with open('hypotheses.p', 'wb') as fp: # fp: file pointer?
-            pickle.dump(tr_save, fp)
+        if(SAVE_TRAJECTORIES):
+            with open('hypotheses.p', 'wb') as fp: # fp: file pointer?
+                pickle.dump(tr_save, fp)
     # END EXTEND
 
 # debug main:
 def main_d():
     print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
-    tr_list = []
-    with open('hypotheses.p', 'rb') as fp: # fp: file pointer?
-            tr_list = pickle.load(fp)
-    print(tr_list)
-            
+    visualizeSaved()
     return
 
     # INIT:

@@ -1,7 +1,7 @@
 from Detection import Detection
 import numpy as np
 import random
-
+import pickle
 
 # takes list of tuples, returns list of detections
 def coords2detect(X):
@@ -138,6 +138,18 @@ def readDetFile2(filename: str):
             frame_i = frame_i + 1
     return detections
 
+# funciton reads trajectories from file and returns array of trajectories
+def readTrajectoryFile(filename: str):
+    tr_list = []
+    with open(filename, 'rb') as fp: # fp: file pointer?
+        tr_list = pickle.load(fp)
+    
+    # need to fix detections from some files:
+    # t0 = tr_list[0:4]
+    # tr_list = tr_list[4:]
+    # tr_list.insert(0, t0)
+    return tr_list
+
 
 # bounding box deteciton to Detection - generates Detection object with coordinates of center of a bounding box
 def bbDet2Det(bb: tuple, t: int = 0):
@@ -149,4 +161,33 @@ def bbDet2Det(bb: tuple, t: int = 0):
 if __name__ == "__main__":
     filename = "../data/detections/LaSOT_car-17.txt"
     readDetFile(filename=filename)
+
+def getTrColor():
+    return tr_colors[int(random.random()*len(tr_colors))]
+
+
+tr_colors=[
+    (158,98,64),
+    (222,164,126),
+    (205,70,49),
+    (248,242,220),
+    (129,173,200),
+    (129,173,200),
+    (164,175,105),
+    (211,82,105),
+    (242,255,73),
+    (255,66,66),
+    (251,98,246),
+    (100,93,215),
+    (179,255,252),
+    (138,162,158),
+    (61,84,103),
+    (104,105,99),
+    (128,207,169),
+    (15,3,38),
+    (181,217,156),
+    (177,204,116)
+]
+
+
 

@@ -48,7 +48,7 @@ class Trajectory:
     # HOLES: allow up to n holes, if no detections after n frames, discontinue (also delete all predictions); also prune tails from both ends
     def connectPoints(self, td_orig: TDet, dt=1) -> list[TDet]:
         # print("this is connect points:")
-        t_n = len(self.detectionSpace.D)
+        t_n = len(self.detectionSpace.D) # number of 'detection frames'
         n_holes_total = 0 # skupno stevilo lukenj
         n_holes = 0 # stevilo zaporednih lukenj
         n_holes_max = 5 # najvecje steivlo zaporednih lukenj
@@ -185,6 +185,7 @@ class Trajectory:
         probs = []
         
         for d in det_list:
+            # print("[",self.id,"]",d.t, t_off, d.t-t_off, "(",len(self.X),")")
             td = self.X[d.t - t_off]
             d_prob = self.detectionSpace.getProb2(d,td)
             probs.append(d_prob)
@@ -207,16 +208,19 @@ class Trajectory:
         
         
         # next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1) !! IS THIS CORRECT? !! (collect around current)
-        next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred) # collect around prediction
+        s_region_bias = td_current.k*self.holes_ref # search region bias: is added to extend search region (to recover from occlusion, hopefully)
+        s_region_bias = 0 # do not use bias
+        next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred, s_region_bias) # collect around prediction
 
         self.detectionSpace.drawX(td_pred.x, 0.5)
-        self.detectionSpace.drawDsearchRegionAroundDetection(td_pred.x)
+        self.detectionSpace.drawDsearchRegionAroundDetection(td_pred.x, 15+td_pred.v+s_region_bias, 15+s_region_bias, td_pred.theta)
         
         add_estimate = True # if this is true, then estimate next value with method, else add detection with posiiton of last detection and velocity 0 (as if it did not move)
         if(len(next_dets) == 0): # hole
-            if(self.holes_ref == 0): # set holes_ref for reference to determine relative holes
-                self.holes_ref = self.holes
-            
+            # if(self.holes_ref == 0): # set holes_ref for reference to determine relative holes -> zakaj to rabm?
+            #     print("self.holes: ", self.holes)
+            #     self.holes_ref = self.holes
+            self.holes_ref = self.holes_ref + 1 # simply add 1 (to relative)
             self.holes = self.holes + 1
             
             # handle case for consecutive holes:
@@ -314,6 +318,8 @@ class Trajectory:
         
         dets_in_tr = self.D # detections, that are part of trajectory (this is set)
         dets_in_tr_map = detSet2map(dets_in_tr) # (this is map of ^)
+        # print(dets_in_tr)
+        # print(dets_in_tr_map)
 
         # 1. calculate model error
         for dets_i in dets_in_tr_map:

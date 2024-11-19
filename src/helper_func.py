@@ -118,7 +118,7 @@ def readDetFile(filename: str):
             # print()
     return detections
 
-# like ^ (readDetFile), this one returns detections instead of tuples
+# like ^ (readDetFile), this one returns detections instead of tuples (might need to offset it with +1)
 def readDetFile2(filename: str):
     detections = []
     with open(filename) as fd:

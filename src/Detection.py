@@ -30,6 +30,7 @@ class TDet(Detection):
         super().__init__(x, t)
         self.v=v
         self.theta = theta
+        self.k = 1.4 # experimental: used in DetectionSpace.isWithin (if trajectory is stalled, then this coefficient is used to extend search region (for occlusions))
     
     def __str__(self):
         return "td{x="+str(self.x)+",t="+str(self.t)+"}"

@@ -18,7 +18,8 @@ EXT_THR=20 # maximum number of extrapolation of trajectories (# of consecutive f
 UNSELECTED_STRIKE_MAX=5 # maximum number of times that trajectory is not selected but included in set
 SAVE_TRAJECTORIES=False # switch to save trajectories on every selection step for vizualization/debug purposes
 
-E1,E2 =  2.3,0.1
+E1,E2 =  3.3,0.1
+# E1,E2 =  2.3,0.1
 # E1,E2 =  1.2,0.1
 
 
@@ -161,17 +162,24 @@ def selectBest(tr: list, dspace: DetectionSpace, debug = False, recalculate_scor
 def getSelectedNvisualize(tr: list[Trajectory], v: list[int], dspace:DetectionSpace, debug=False, separately=False) -> list:
     # draw them
     tr_temp = [] # temporary tr (to store only those, that are selected)
+    # print(len(tr), len(v))
     for i in range(len(tr)):
         # print("trajectory: ", tr[i].id," - ", tr[i].holes_ref)
         if(debug):
             print(i, end= ", ", flush=True)
         # if((v[0][i] != 0) and (tr[i].holes_ref <= 15)):
+        tr_color = tr[i].color
+
         if((v[i] != 0) and (tr[i].holes_ref <= 15)):
             if(separately):
-                dspace.clearSpace()
-            tr[i].drawToSpace(color=[255,255,0])
+                print()
+                tr[i].color = [255,255,0]
+                print("showing: ", tr[i].id)
+            tr[i].drawToSpace()
             if(separately):
                 dspace.showSpace(draw_dets=DRAW_DETS)
+                tr[i].color = tr_color
+                tr[i].drawToSpace()
             tr[i].not_selected_strike = 0 # reset not selected strike if is selected
             tr_temp.append(tr[i])
         else:
@@ -235,43 +243,32 @@ def visualizeSaved():
 
     # init variables used in process
     D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
-    TR = readTrajectoryFile('debug_data/hypotheses.p')
+    # TR = readTrajectoryFile('debug_data/hypotheses.p')
+    TR = readTrajectoryFile('hypotheses.p') # tr is [(t_global, [trajectories])]
 
-
-    # print(TR)
-
-    t_global = 0 # current time (frame)
-    n = 20
-    n_res = len(D13) - n
+    T_OFFSET = 20 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
+    t_global = T_OFFSET # current time (frame)
+    n = 19 # number of previous frames for trajectory init
+    # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
+    n_res = len(D13) - n # [TODO: handle properly (new t_global mechanics)]
     tr: list[Trajectory] = []
-    n_solve = 20
     # ------------------------------
     
-    t_global = 1
+    # init dspace:
     frame = getFrameAtI(t_global)
     h,w,_ = np.shape(frame)
     dspace = DetectionSpace(h,w)
-    dspace.map = frame
-    dspace.D.append([]) # skip zero, because frames are read from 1 on
-    # dspace.D = D13[1:2]
-    print("init dspace: ", dspace.D)
-    
+    dspace.lastFrame = frame
     
     # append detections
-    for i in range(1,n):
-        dspace.D.append(D13[i])
-        t_global = t_global + 1
+    for d in D13[T_OFFSET-n:T_OFFSET]:
+        dspace.D.append(d)
     
-    # set last frame
-    frame = getFrameAtI(n-1)
-    dspace.lastFrame = frame.copy()
-    dspace.map = frame
-
     tr_i = 0
     t_global, tr = TR[tr_i] # initial trajectories
     tr_i = tr_i + 1
     
-    # set trajectories space pointers
+    # set trajectories dspace pointers
     for _,tl in TR:
         for t in tl:
             t.detectionSpace = dspace # pointers from objects read from picle are no longer valid
@@ -280,11 +277,13 @@ def visualizeSaved():
     # choose best trajectories and draw them:
     v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # already have scores
     # getSelectedNvisualize(tr, v[0], dspace, True, True)
-    # END INIT
+    # # END INIT
+    
 
     # ONLY SELECTED
     # selected_tr = [0:len(tr)]
-    selected_tr = list(range(len(TR)))
+    selected_tr = list(range(len(TR))) # select all
+    # selected_tr = [16] # select all
     for tr_i in selected_tr:
         t_global, tr = TR[tr_i]
 
@@ -300,40 +299,55 @@ def visualizeSaved():
 
             # 2. read trajectories
             print("-----------------> t: ", t_global, ", tr_i: ", tr_i)
-            v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # already have scores
-            # dspace.clearSpace()
+            v = selectBest(tr, dspace, debug=True, recalculate_scores=True) # already have scores
+            
+            dspace.clearSpace()
+            for ii in range(len(tr)):
+                if(v[0][ii] == 1):
+                    print("-> ",end="",flush=True)
+                else:
+                    print("   ", end="", flush=True)
+                print(tr[ii]," holes: ", tr[ii].holes_ref, " nss: ", tr[ii].not_selected_strike)
             # for ii in range(len(tr)):
             #     if(v[0][ii] == 0):
             #         tr[ii].color = getTrColor()
             #         tr[ii].drawToSpace()
-            for ii in range(len(tr)):
-                if(v[0][ii] == 1):
-                    # tr[ii].color = [255,255,0]
-                    # tr[ii].drawToSpace()
-                    print("-> ",end="",flush=True)
-                print(tr[ii]," holes: ", tr[ii].holes_ref, " nss: ", tr[ii].not_selected_strike)
+            # for ii in range(len(tr)):
+            #     if(v[0][ii] == 1):
+            #         tr[ii].color = [255,255,0]
+            #         tr[ii].drawToSpace()
+            #         print("-> ",end="",flush=True)
+            #     print(tr[ii]," holes: ", tr[ii].holes_ref, " nss: ", tr[ii].not_selected_strike)
+            #     input("continue")
             # dspace.showSpace(draw_dets=DRAW_DETS)
-            # getSelectedNvisualize(tr, v[0], dspace, True, False)
+            
             
             # debug section
-            # print("--------- D --------------")
-            # if(tr_i == 5):
-            #     tr83 = tr[6]
-            #     tr84 = tr[7]
+            print("--------- D --------------")
+            if(tr_i == -1):
+                tr5 = tr[1]
+                tr203 = tr[7]
 
-            #     tr83d = tr83.D
-            #     tr84d = tr84.D
-            #     print(tr83,tr84)
-            #     print(tr83.basedOnSameDetections(tr84))
-            #     print(tr83d)
-            #     print("\n")
-            #     print(tr84d)
-            #     print("\n")
-            #     print(tr83d.difference(tr83d & tr84d))
+                print(tr5, tr203)
+                Q = dspace.buildQBPMatrix2([tr5,tr203], E1, E2, recalculate_scores=True)
+                print(Q)
+                print(dspace.solveQBP(Q))
+                print(dspace.solveQBP2(Q))
+
+                # tr83d = tr83.D
+                # tr84d = tr84.D
+                # print(tr83,tr84)
+                # print(tr83.basedOnSameDetections(tr84))
+                # print(tr83d)
+                # print("\n")
+                # print(tr84d)
+                # print("\n")
+                # print(tr83d.difference(tr83d & tr84d))
 
 
-            # print("--------- ! --------------")
-            input("continue?")
+            print("--------- ! --------------")
+            getSelectedNvisualize(tr, v[0], dspace, True, separately=True)
+            # input("continue?")
 
 
     # LOOP ALL:
@@ -380,53 +394,62 @@ def main():
 
     # init variables used in process
     D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
-    t_global = 0 # current time (frame)
-    n = 20
-    n_res = len(D13) - n
+    # T_OFFSET = 20 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
+    T_OFFSET = 500 + 653 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
+    t_global = T_OFFSET # current time (frame)
+    n = 19 # number of previous frames for trajectory init
+    # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
+    n_res = len(D13) - n # [TODO: handle properly (new t_global mechanics)]
     tr: list[Trajectory] = []
-    n_solve = 5# 20
+    n_solve = 5 # 20 # 'time window' - # of frames between trajectory selections
     # ------------------------------
     
-    t_global = 1
     frame = getFrameAtI(t_global)
     h,w,_ = np.shape(frame)
-    dspace = DetectionSpace(h,w)
-    dspace.map = frame
-    dspace.D.append([]) # skip zero, because frames are read from 1 on
+    dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n)) # also pass time offset for using correct indices
+    
+    # dspace.D.append([]) # skip zero, because frames are read from 1 on
     # dspace.D = D13[1:2]
-    # print("init dspace: ", dspace.D)
+    print("init dspace: ", dspace.D)
     
     
     # append detections
-    for i in range(1,n):
-        dspace.D.append(D13[i])
-        print(D13[i])
-        t_global = t_global + 1
+    D13_init = D13[T_OFFSET-n:T_OFFSET] # initial detection slice (relative to t_global; use previous n detections)
+
+    for d in D13_init:
+        dspace.D.append(d)
+        print(d)
+    # print("l: ", len(dspace.D))
     # print("---")
     
     # set last frame
-    frame = getFrameAtI(n-1)
+    frame = getFrameAtI(t_global)
     dspace.lastFrame = frame.copy()
     dspace.map = frame
 
     # build trajectories from all detectinos
     # 1. get list of all detections
     det_list = []
-    for dl in D13[1:n]:
+    for dl in D13_init:
         # print(dl)
         for d in dl:
             det_list.append(d)
-
-    # return
+    # print("l: ", len(D13_init))
+    # print(det_list)
     
     # 2. build them
     for i in range(0,len(det_list), 1):
         d = det_list[i]
         new_tr: Trajectory = Trajectory(d, dspace)
+        # print(d)
         new_tr.build()
+        # print("end of bild, get score:")
         new_tr.getScore(E1,E2) # calculate score of trajectory (Trajectory.S is set) (merit term used in matrix)
         tr.append(new_tr)
+        # input("continue?")
     print(len(tr))
+
+    # return
 
     # drop redunant trajectories (ones that use same detections and have lower score than others with same detections)
     tr = dropRedundant(tr, debug=False, recalculate=False) # no need to recalculate, because we already have calculated scores
@@ -448,7 +471,8 @@ def main():
     
     try:
         tr_save = []
-        tr_save.append((t_global-1,copy.deepcopy(tr))) # init trajectories to save
+        if(SAVE_TRAJECTORIES):
+            tr_save.append((t_global-1,copy.deepcopy(tr))) # init trajectories to save
         # on every new frame, do:
         for i in range(n_res):
             # 0. set new frame
@@ -510,13 +534,13 @@ def main():
 
                     t_i = t_i+1
 
-                tr = tr_temp
+                # tr = tr_temp
 
 
                 # keep only selected (only for testing purposes)
                 # tr_temp = getSelectedNvisualize(tr, v[0], dspace, separately=True, debug=True)
                 getSelectedNvisualize(tr, v[0], dspace, separately=True, debug=True)
-                # tr = tr_temp
+                tr = tr_temp
 
             t_global = t_global + 1
 
@@ -534,6 +558,22 @@ def main():
 def main_d():
     print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
     visualizeSaved()
+    return
+    Q = np.array([
+ [ 88.39222222  ,-0.           ,-0.           ,-46.49611111  ,-0.            ,-0.           ,-0.          ,-0.           ,-0.           ,-0.        ],
+ [ -0.          ,79.77444444   ,-0.           ,-0.           ,-0.            ,-0.           ,-0.          ,-29.99277778  ,-0.           ,-0.        ],
+ [ -0.          ,-0.           ,-21.93888889  ,-0.           ,-8.99611111    ,-5.49722222   ,-0.          ,-0.           ,-5.49888889   ,-0.        ],
+ [-46.49611111  ,-0.           ,-0.           ,90.69555556   ,-0.            ,-0.           ,-0.          ,-0.           ,-0.           ,-0.        ],
+ [ -0.          ,-0.           ,-8.99611111   ,-0.           ,-28.00777778   ,-5.49722222   ,-0.          ,-0.           ,-5.49722222   ,-0.        ],
+ [ -0.          ,-0.           ,-5.49722222   ,-0.           ,-5.49722222    ,-32.70555556  ,-0.          ,-0.           ,-5.49722222   ,-0.        ],
+ [ -0.          ,-0.           ,-0.           ,-0.           ,-0.            ,-0.           ,5.19666667   ,-0.           ,-0.           ,-7.99888889],
+ [ -0.          ,-29.99277778  ,-0.           ,-0.           ,-0.            ,-0.           ,-0.          ,60.68444444   ,-0.           ,-0.        ],
+ [ -0.          ,-0.           ,-5.49888889   ,-0.           ,-5.49722222    ,-5.49722222   ,-0.          ,-0.           ,-25.80222222  ,-0.        ],
+ [ -0.          ,-0.           ,-0.           ,-0.           ,-0.            ,-0.           ,-7.99888889  ,-0.           ,-0.           ,13.69555556]
+])
+    s=None
+    print(DetectionSpace.solveQBP(s,Q))
+    print(DetectionSpace.solveQBP2(s,Q))
     return
 
     # INIT:

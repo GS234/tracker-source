@@ -15,7 +15,7 @@ GREEN = [0,255,0]
 EXIT_ZONE_OFFSET = 5
 
 class DetectionSpace:
-    def __init__(self, h,w, D: list = None):
+    def __init__(self, h,w, D: list = None, time_offset = 0):
         # self.map = np.zeros((n,n)).astype(np.float32) # init empty map (old way)
         self.lastFrame = np.zeros((h,w,3)).astype(np.uint8)
         self.map = np.zeros((h,w,3)).astype(np.uint8) # init empty map
@@ -23,6 +23,7 @@ class DetectionSpace:
         self.hw = (h,w) # map size (dimensions)
         self.window_name = "detection space"
         self.TR = [] # array for storing trajectories (unused)
+        self.time_offset = time_offset # time offset constant: because self.D expects t0 at index 0 (t0 is not necessarily 0, so this constant is used to correct detection accesses)
         
         self.D = [] # detections (2d array, 1st dim. is time, subarrays contain detections)
         if D is not None:
@@ -56,8 +57,8 @@ class DetectionSpace:
 
     # !!! POMEMBNO:
     # check if detection d is within this detection's search region (seems to work fine)
-    def isWithin(self, x, x_ref, a=S1, b=S2):
-        rot_mat = self.getRotationMatrix() # get rotation matrix to rotate detection (easier calculation)
+    def isWithin(self, x, x_ref, a=S1, b=S2, theta=0):
+        rot_mat = self.getRotationMatrix(theta) # get rotation matrix to rotate detection (easier calculation)
         v = x - x_ref # representation relative to ellipsis center (da se prav obrne)
         v = np.dot(rot_mat.T, v)
 
@@ -132,17 +133,22 @@ class DetectionSpace:
     def clearSpace(self):
         self.map = self.lastFrame.copy()
 
-    # collects detections within search region at time t
+    # collects detections within search region at time t (INFO: t is global time (t0 is not necessarily 0, so it is used to calculate offset: t0' = t0 - t_off))
     # returns: DETECTIONS (has changed from coordinates, as we need those objects for trajectories), their probabilities
-    def collectWithin(self, t:int, td: TDet):
+    # region_bias: used to expand search region
+    def collectWithin(self, t:int, td: TDet, region_bias=0):
         # search among detections in next time moment (next frame, that is (whichever, usually immediate successor (dt = 1)))
         next_detections = [] # store 'em in list
         next_detections_probs = [] # weights: sampled from distribution (bivariate normal dist, see Detection.getProb())
+        t = t - self.time_offset # to fix indexing of self.D
+
         # print(self.D)
         # print(t)
         if(t < len(self.D) and t >= 0): # check only if has detections in this layer (and not before 0 (negative indices overflow))
+            # print("self.d: ",self.D[t], "t: ", t, "t + t_off: ", t+self.time_offset, "len(d): ", len(self.D))
             for d_i in self.D[t]:
-                if(self.isWithin(d_i.x, td.x)):
+                if(self.isWithin(d_i.x, td.x, a = S1+td.v+region_bias, b=S2+region_bias, theta=td.theta)):
+                    # print(d_i, " is within ", td)
                     next_detections.append(d_i) # store detections, for now
                     next_detections_probs.append(self.getProb(d_i.x, td.x)) # get probability score from nearby point
         

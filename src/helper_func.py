@@ -1,7 +1,9 @@
 from Detection import Detection
 import numpy as np
+import cv2 as cv
 import random
 import pickle
+from matplotlib import pyplot as plt
 
 # takes list of tuples, returns list of detections
 def coords2detect(X):
@@ -138,6 +140,61 @@ def readDetFile2(filename: str):
             frame_i = frame_i + 1
     return detections
 
+# function adds color histograms to detections (separate function for convenience (frames have different path))
+def colorHist2Det(dets: list[list[Detection]], path: str, begin:int = 0, end: int = -1, n_bins=8):
+    if(end < begin):
+        begin=0
+        end=-1
+    if(end == -1):
+        end = len(dets)
+    
+    i = begin
+    while(i < end):
+        # get frame at i
+        # frame = getFrameAtI(i+1, path) # tezave: +1
+        frame = getFrameAtI(i, path)
+        # cv.imshow("debug", frame)
+        # for each detection calculate color hist
+        for d in dets[i]:
+            updateDetColorHistFromFrame(d, frame, n_bins=n_bins)
+            # cv.imshow("c", frame_bb)
+            # cv.waitKey(0)
+            # showHists([d.color_hist])
+        # cv.waitKey(0)
+        i = i+1
+
+# function: crop detection from frame, calculate color histogram
+# this is separated from colorHist2Det because is also used elsewhere (in main, might also in some place else)
+def updateDetColorHistFromFrame(det: Detection, frame, n_bins=8):
+    y, x, h, w = det.bb
+    frame_bb = frame[x:x+w+1,y:y+h+1] # bounding box image
+    det.color_hist = getColorHist(frame_bb,n_bins=n_bins)
+    det.hasHist = True
+
+            
+
+# method calculates color histogram from current frame's detecitons
+def getColorHist(frame_bb, n_bins=8):
+    color_hist = np.zeros((n_bins, n_bins, n_bins))
+    # 1. put each pixel to its corresponding bin
+    for row in frame_bb: # row-major? should be
+        for pixel in row:
+            # 1.1 pixel has rgb; calculate appropriate bins (for each color) and increase cell value
+            px = np.array(pixel)
+            px = (px / 255) * (n_bins-1)
+            px = px.astype(np.uint8)
+            # print(pixel, ", ",px)
+            c1, c2, c3 = px[0],px[1],px[2] # not that important which color is which
+            # 1.2 increase value of correct bin
+            color_hist[c1][c2][c3] += 1
+    # 2. normalize histogram
+    color_hist = color_hist / np.sum(color_hist)
+    return color_hist
+
+# function calculates bhattacharyya coefficient for 2 histograms
+def compareHists(a, A):
+    return np.sum(np.sqrt(a*A)) # bhattacharyya distance
+
 # funciton reads trajectories from file and returns array of trajectories
 def readTrajectoryFile(filename: str):
     tr_list = []
@@ -156,7 +213,37 @@ def bbDet2Det(bb: tuple, t: int = 0):
     x, y = bb[0]+bb[2]//2,bb[1]+bb[3]//2 # (x, y swapped, because of coordinate system)
     return Detection([x,y], t=t, bb=bb)
 
+# function reads i-th frame
+def getFrameAtI(i: int, path: str):
+    frame_i = f'{i:08}'
+    frame = cv.imread(path+str(frame_i)+".jpg")
+    return frame
 
+def showHists(hists:list, c=1):
+    color = ['b','g','r']
+    # show only in one dimension
+    _,ax = plt.subplots(1,len(hists))
+    # print(ax)
+    for j in range(len(hists)):
+        hist = hists[j]
+        arr = np.zeros((np.shape(hist)[0],3))
+        
+        
+        for i in range(len(arr)):
+            arr[i,0] = np.sum(hist[i,:,:]) # c1
+            arr[i,1] = np.sum(hist[:,i,:]) # c2
+            arr[i,2] = np.sum(hist[:,:,i]) # c3
+        x = np.arange(len(arr))
+        
+        
+        if(len(hists) == 1):
+            ax.bar(x,arr[:,c], color=color[c%3])
+        else:
+            ax[j].bar(x,arr[:,c], color=color[c%3])
+    # print(arr)
+    
+    # plt.bar(x,arr)
+    plt.show()
 
 if __name__ == "__main__":
     filename = "../data/detections/LaSOT_car-17.txt"

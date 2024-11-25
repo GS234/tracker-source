@@ -17,7 +17,7 @@ EXIT_ZONE_OFFSET = 5
 class DetectionSpace:
     def __init__(self, h,w, D: list = None, time_offset = 0):
         # self.map = np.zeros((n,n)).astype(np.float32) # init empty map (old way)
-        self.lastFrame = np.zeros((h,w,3)).astype(np.uint8)
+        self.lastFrame = np.zeros((h,w,3)).astype(np.uint8) # last frame (contains no drawings)
         self.map = np.zeros((h,w,3)).astype(np.uint8) # init empty map
         self.exit_zone = EXIT_ZONE_OFFSET # offset from edge
         self.hw = (h,w) # map size (dimensions)
@@ -25,7 +25,7 @@ class DetectionSpace:
         self.TR = [] # array for storing trajectories (unused)
         self.time_offset = time_offset # time offset constant: because self.D expects t0 at index 0 (t0 is not necessarily 0, so this constant is used to correct detection accesses)
         
-        self.D = [] # detections (2d array, 1st dim. is time, subarrays contain detections)
+        self.D: list[list[Detection]] = [] # detections (2d array, 1st dim. is time, subarrays contain detections)
         if D is not None:
             self.D.append(D) # append detections at time t = 0
     
@@ -72,22 +72,18 @@ class DetectionSpace:
         return ((xx*xx)/(a*a) + (yy*yy)/(b*b) <= 1)
 
     # !!! POMEMBNO:
-    # probability density function (bivariate normal distribution) (seems to work fine)
-    def getProb(self, x, x_ref, a=S1, b=S2) -> float:
-        # cov_mat = np.array([[s1,0.0],[0.0,s2]]).astype(np.float32)
-        inv_cov_mat = np.array([[1.0/(3*a),0.0],[0.0,1.0/(3*b)]])
+    # method calculates probability (score) of detection 
+    def getProb2(self, d:Detection, td:TDet, a=S1, b=S2) -> float:
+        motion_model_prob = self.getMotionModelProb(d,td,a,b)
+        color_model_prob = self.getColorModelProb(d,td)
+        return motion_model_prob*color_model_prob
         
-        rot_mat = self.getRotationMatrix()
-        v = x - x_ref # x - mu
-        v = np.dot(rot_mat.T, v) #un-rotate, so that it can be evaluated over un-rotated distribution
 
-        pi_2, cov_mat_det = 2*np.pi , 9*a*b
-        # return (1.0 / (np.sqrt( pi_2*pi_2 * cov_mat_det))) * np.exp(-0.5* np.dot( np.dot(v, inv_cov_mat), v)) # probability
-        return np.exp(-0.5* np.dot( np.dot(v, inv_cov_mat), v)) # score (unscaled prob) (za vizualizacijo)
-    
+    # methods to calculate probability of motion model and color model (used in getProb, getProb2)
+    # probability density function (bivariate normal distribution) (seems to work fine)
     # probability dist. around trajectory detection (also uses velocity and orientation)
     # [TODO] - stretch it according to velocity [TODO TODO TODO]
-    def getProb2(self, d:Detection, td:TDet, a=S1, b=S2) -> float:
+    def getMotionModelProb(self, d:Detection, td:TDet, a=S1, b=S2) -> float:
         inv_cov_mat = np.array([[1.0/(3*a),0.0],[0.0,1.0/(3*b)]])
         
         rot_mat = self.getRotationMatrix(theta=td.theta)
@@ -97,8 +93,22 @@ class DetectionSpace:
         pi_2, cov_mat_det = 2*np.pi , 9*a*b
         # return (1.0 / (np.sqrt( pi_2*pi_2 * cov_mat_det))) * np.exp(-0.5* np.dot( np.dot(v, inv_cov_mat), v)) # probability
         return np.exp(-0.5* np.dot( np.dot(v, inv_cov_mat), v)) # score (unscaled prob) (za vizualizacijo)
+
+    # method compares color models and returns similarity
+    def getColorModelProb(self, d:Detection, td:TDet) -> float:
+        color_model_prob = 1
+        if(d.hasHist):
+            if(td.hasHist):
+                color_model_prob = compareHists(td.color_hist, d.color_hist)
+                # print("model similarity: ", color_model_prob)
+            else:
+                print("[warn] (getColorModelProb) ", td, " has no color hist, setting to 1")
+        else:
+            print("[warn] (getColorModelProb) ", d," has no color hist, setting to 1")
+
+        return color_model_prob
+
     # ----------------------------------------------------------------------------------------
-    
 
     def showSpace(self, det_color=[0,0,0], draw_dets=True):
         # draw exit zone (border)
@@ -150,7 +160,10 @@ class DetectionSpace:
                 if(self.isWithin(d_i.x, td.x, a = S1+td.v+region_bias, b=S2+region_bias, theta=td.theta)):
                     # print(d_i, " is within ", td)
                     next_detections.append(d_i) # store detections, for now
-                    next_detections_probs.append(self.getProb(d_i.x, td.x)) # get probability score from nearby point
+
+                    detection_prob = self.getProb2(d_i, td)
+
+                    next_detections_probs.append(detection_prob) # get probability score from nearby point
         
         return next_detections, next_detections_probs
         
@@ -172,8 +185,12 @@ class DetectionSpace:
         # change list of detections to matrix of detections coordinates
         n_det = len(next_detections) # number of detections (i)
         next_detections_X = np.zeros((n_det, 2))
+        next_detections_hist_weighted_sum = d_last.color_hist # init with current model
         for i in range(n_det):
             next_detections_X[i] = next_detections[i].x
+            if(next_detections[i].hasHist):
+                # print(next_detections_hist_weighted_sum, "  --  ", next_detections[i].color_hist)
+                next_detections_hist_weighted_sum = next_detections_hist_weighted_sum + next_detections[i].color_hist*next_detections_probs[i] # do everything in one go
         
         # 1. compute weighted mean (prediction + all detections) to determine actual next point
         # temporal discount, as used in paper [pami, leibe et al. ...] = e^-lambda
@@ -200,7 +217,12 @@ class DetectionSpace:
         if(x_dif[1] < 0): # same angle is computed for both sides, because we only compare magnitude, so correction is needed in some cases
             theta_t1 = -theta_t1
         
+        # appearance model: weighted sum of all models (did that above):
+        color_hist_est = (1/(Z-p_tempDisc+1)) * next_detections_hist_weighted_sum # +1? current color model has weight 1 (maybe should be made differently)
+        
         d_t1 = TDet(x_t1,t_i1,v_t1,theta_t1) # next detection, it should probably be something else
+        d_t1.color_hist = color_hist_est
+        d_t1.hasHist = True
         return (d_t1,x_p)
 
 
@@ -344,7 +366,7 @@ class DetectionSpace:
         for i in range(x[0]-s1s2,x[1]+s1s2,1):
             for j in range(x[0]-s1s2,x[1]+s1s2,1):
                 if(self.isWithin((i,j),x)):
-                    prob = self.getProb((i,j),x)
+                    prob = self.getProb2( Detection((i,j)), TDet(x))
                     self.map[i][j] = prob
     
     

@@ -18,23 +18,32 @@ class Trajectory:
 
     def __init__(self, d0: Detection, detectionSpace: DetectionSpace, color: list=None):
         self.id = Trajectory.Tid # unique id of the trajectory
+        Trajectory.Tid = Trajectory.Tid+1
+        self.detectionSpace = detectionSpace # pointer to detection space in which trajectory lives (has detections)
         
         self.color = (np.random.rand(3)*150).astype(np.uint8)+10 # color of trajectory (for visualization)
         self.color[2]=255
         if(color is not None):
             self.color = color
-        Trajectory.Tid = Trajectory.Tid+1
-        self.origin = TDet(d0.x,d0.t,0,0)
-        self.detectionSpace = detectionSpace # pointer to detection space in which trajectory lives (has detections)
-        self.X = [ ] # trajectory points ("trajectory" detections)
-        self.holes = 0 # counter: how many trajectory points have been added considering only estimate of next detection
-        self.holes_ref = 0 # holes reference: used to calculate relative number of holes (set to self.holes first, then calculate difference) (used in extend)
         
-        self.not_selected_strike = 0 # number of times the trajectory has not been selected but is in hypothesis set
-        self.disable_grow = False # flag: disable trajectory to grow
+        # set origin: fromDetection + some mods (also need bounding box, color histogram)
+        self.origin = TDet(d0.x,d0.t,0,0)
+        self.origin.bb = d0.bb
+        self.origin.hasHist = d0.hasHist
+        self.origin.color_hist = d0.color_hist
+        # ---
 
-        self.S = 0 # score/support of the trajectory (IS SET/UPDATED IN DetectionSpace.buildQBPMatrix() METHOD)
         self.D = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
+        self.X = [ ] # trajectory points ("trajectory" detections)
+        
+        self.S = 0 # score/support of the trajectory - getScore
+        self.holes = 0 # counter: how many trajectory points have been added considering only estimate of next detection
+        
+        # pruning variables
+        self.holes_ref = 0 # holes reference: used to calculate relative number of holes (set to self.holes first, then calculate difference) (used in extend)
+        self.not_selected_strike = 0 # number of times the trajectory has not been selected but is in hypothesis set
+        self.disable_grow = False # flag: disable trajectory to grow (if not selected for a while)
+        # -----------------
 
     # method estimates next position based on current position, velocity and orientation (theta)
     def estimateNext(self, td_current: TDet, dt: int = 1) -> TDet:
@@ -42,7 +51,11 @@ class Trajectory:
         t = td_current.t
         x_t1 = x[0] + int(dt*td_current.v*math.cos(td_current.theta))
         y_t1 = x[1] + int(dt*td_current.v*math.sin(td_current.theta))
-        return TDet((x_t1, y_t1), t+dt, td_current.v, td_current.theta)
+
+        nextTDet = TDet((x_t1, y_t1), t+dt, td_current.v, td_current.theta)
+        nextTDet.color_hist = td_current.color_hist # assume current appearance
+        nextTDet.hasHist = td_current.hasHist
+        return nextTDet
     
     # method builds trajectory and returns list of trajectory detections (and holes)
     # HOLES: allow up to n holes, if no detections after n frames, discontinue (also delete all predictions); also prune tails from both ends
@@ -235,6 +248,11 @@ class Trajectory:
         
         # might not need to add it (because)
         td_next = TDet(td_current.x, td_pred.t, 0, td_current.theta)
+        # ALSO ADD COLOR MODEL
+        td_next.color_hist = td_current.color_hist
+        td_next.hasHist = td_current.hasHist
+        # -----------
+
         # d_t1 = TDet(x_t1,t_i1,v_t1,theta_t1) # next detection, it should probably be something else
         if(add_estimate):
             # # 3. estimate next detection: weighted mean of detections

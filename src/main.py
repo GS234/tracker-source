@@ -1,4 +1,4 @@
-from helper_func import coords2det2, readDetFile2, coords2map, readTrajectoryFile, getTrColor
+from helper_func import coords2det2, readDetFile2, coords2map, readTrajectoryFile, getTrColor, getFrameAtI, colorHist2Det, getColorHist, showHists, updateDetColorHistFromFrame
 from DetectionSpace import DetectionSpace
 from Trajectory import Trajectory
 from Detection import Detection
@@ -191,11 +191,11 @@ def getSelectedNvisualize(tr: list[Trajectory], v: list[int], dspace:DetectionSp
         print()
     return tr_temp
 
-# function reads i-th frame
-def getFrameAtI(i: int, path=FRAMES_PATH):
-    frame_i = f'{i:08}'
-    frame = cv.imread(DATA_ROOT+path+str(frame_i)+".jpg")
-    return frame
+# # function reads i-th frame
+# def getFrameAtI(i: int, path=FRAMES_PATH):
+#     frame_i = f'{i:08}'
+#     frame = cv.imread(DATA_ROOT+path+str(frame_i)+".jpg")
+#     return frame
 
 def dropRedundant(tr: list[Trajectory], debug=False, recalculate=True) -> list[Trajectory]:
     tr_new: list[Trajectory] = []
@@ -255,7 +255,7 @@ def visualizeSaved():
     # ------------------------------
     
     # init dspace:
-    frame = getFrameAtI(t_global)
+    frame = getFrameAtI(t_global, DATA_ROOT+FRAMES_PATH)
     h,w,_ = np.shape(frame)
     dspace = DetectionSpace(h,w)
     dspace.lastFrame = frame
@@ -289,7 +289,7 @@ def visualizeSaved():
 
         if(tr_i < len(TR)):
             # 0. set new frame
-            frame = getFrameAtI(t_global)
+            frame = getFrameAtI(t_global, DATA_ROOT+FRAMES_PATH)
             dspace.lastFrame = frame.copy()
             dspace.map = frame
 
@@ -394,6 +394,7 @@ def main():
 
     # init variables used in process
     D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
+    # print(D13[0:20])
     # T_OFFSET = 20 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
     T_OFFSET = 500 + 653 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
     t_global = T_OFFSET # current time (frame)
@@ -404,9 +405,14 @@ def main():
     n_solve = 5 # 20 # 'time window' - # of frames between trajectory selections
     # ------------------------------
     
-    frame = getFrameAtI(t_global)
+    # INIT DSPACE
+    frame = getFrameAtI(t_global,DATA_ROOT+FRAMES_PATH)
     h,w,_ = np.shape(frame)
     dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n)) # also pass time offset for using correct indices
+    
+    # set last frame
+    dspace.lastFrame = frame.copy()
+    dspace.map = frame
     
     # dspace.D.append([]) # skip zero, because frames are read from 1 on
     # dspace.D = D13[1:2]
@@ -415,18 +421,18 @@ def main():
     
     # append detections
     D13_init = D13[T_OFFSET-n:T_OFFSET] # initial detection slice (relative to t_global; use previous n detections)
+    # also compute color hists for them
+    colorHist2Det(D13, DATA_ROOT+FRAMES_PATH, T_OFFSET-n,T_OFFSET)
+    print(D13[T_OFFSET-n-5:T_OFFSET+5 ])
 
     for d in D13_init:
         dspace.D.append(d)
         print(d)
     # print("l: ", len(dspace.D))
     # print("---")
+    # END INIT DSPACE
     
-    # set last frame
-    frame = getFrameAtI(t_global)
-    dspace.lastFrame = frame.copy()
-    dspace.map = frame
-
+    
     # build trajectories from all detectinos
     # 1. get list of all detections
     det_list = []
@@ -436,9 +442,10 @@ def main():
             det_list.append(d)
     # print("l: ", len(D13_init))
     # print(det_list)
-    
+    print("building: ")
     # 2. build them
     for i in range(0,len(det_list), 1):
+        # print(i)
         d = det_list[i]
         new_tr: Trajectory = Trajectory(d, dspace)
         # print(d)
@@ -447,7 +454,7 @@ def main():
         new_tr.getScore(E1,E2) # calculate score of trajectory (Trajectory.S is set) (merit term used in matrix)
         tr.append(new_tr)
         # input("continue?")
-    print(len(tr))
+    print("n_tr: ",len(tr))
 
     # return
 
@@ -476,12 +483,20 @@ def main():
         # on every new frame, do:
         for i in range(n_res):
             # 0. set new frame
-            frame = getFrameAtI(t_global)
+            frame = getFrameAtI(t_global,DATA_ROOT+FRAMES_PATH)
             dspace.lastFrame = frame.copy()
             dspace.map = frame
 
             # 1. get detections in current frame
             latest_dets = D13[t_global]
+
+            # ALSO CALCULATE DETECTIONS' COLOR HISTOGRAMS
+            for d in latest_dets:
+                updateDetColorHistFromFrame(d, frame)
+            # print("latest dets: ",latest_dets)
+            # -----------------------------------
+
+
             dspace.D.append(latest_dets)
 
             # print(latest_dets)
@@ -557,6 +572,51 @@ def main():
 # debug main:
 def main_d():
     print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
+    
+    # D13 = readDetFile2(DATA_ROOT+"testing/dets.txt") # read detections from file
+    # # print(D13[0:20])
+    # # T_OFFSET = 20 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
+    # T_OFFSET = 1 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
+    # t_global = T_OFFSET # current time (frame)
+    # n = 0 # number of previous frames for trajectory init
+    # # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
+    # n_res = len(D13) - n # [TODO: handle properly (new t_global mechanics)]
+    # tr: list[Trajectory] = []
+    # n_solve = 5 # 20 # 'time window' - # of frames between trajectory selections
+    # # ------------------------------
+    
+    # frame = getFrameAtI(t_global,DATA_ROOT+"testing/")
+    # # cv.imshow("abc", frame)
+    # # cv.waitKey(0)
+    # h,w,_ = np.shape(frame)
+    # dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n)) # also pass time offset for using correct indices
+    # dspace.lastFrame = frame.copy()
+    # dspace.map=frame
+    
+    # # dspace.D.append([]) # skip zero, because frames are read from 1 on
+    # # dspace.D = D13[1:2]
+    # print("init dspace: ", dspace.D)
+    
+    
+    # # append detections
+    # D13_init = D13[T_OFFSET-n:T_OFFSET+1] # initial detection slice (relative to t_global; use previous n detections)
+    # # print(D13_init)
+    # # also compute color hists for them
+    # colorHist2Det(D13, DATA_ROOT+"testing/", T_OFFSET-n,T_OFFSET+1)
+    # hists = [d.color_hist for d in D13_init[0]]
+    # mean_hist = 0.5*hists[0]+0.5*hists[1]
+    # hists.append(mean_hist)
+    # showHists(hists=hists)
+    
+    # print(D13[T_OFFSET-n-5:T_OFFSET+5 ])
+
+    # for d in D13_init:
+    #     dspace.D.append(d)
+    #     print(d)
+
+    # dspace.showSpace(draw_dets=False)
+
+    # return
     visualizeSaved()
     return
     Q = np.array([

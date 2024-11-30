@@ -12,9 +12,10 @@ import pickle
 DATA_ROOT = "../data/"
 FRAMES_PATH = "frames/LaSOT_bird-2/color/"
 DRAW_DETS=False
-# MAIN_DEB=True
-MAIN_DEB=False
-EXT_THR=20 # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory)
+MAIN_DEB=True
+# MAIN_DEB=False
+EXT_THR=20 # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory (number of relative holes, essentially))
+PO_THR=7 # possibly occluded threshold: number of holes before trajectory is marked as occluded
 UNSELECTED_STRIKE_MAX=5 # maximum number of times that trajectory is not selected but included in set
 SAVE_TRAJECTORIES=False # switch to save trajectories on every selection step for vizualization/debug purposes
 
@@ -384,9 +385,6 @@ def visualizeSaved():
 
     #     t_global = t_global + 1
 
-
-
-
 # main:
 def main():
     # INIT:
@@ -539,6 +537,7 @@ def main():
                         print("-> ", end="", flush=True)
                     print(t," holes: ", t.holes_ref, " nss: ", t.not_selected_strike)
 
+                    # pruning is actually happening here
                     if(t.holes_ref < EXT_THR):
                         if((t.S >= 0) or ((t.S < 0) and (-t.S <= len(t.X))) ):
                             if(t.not_selected_strike > UNSELECTED_STRIKE_MAX):
@@ -572,153 +571,246 @@ def main():
 # debug main:
 def main_d():
     print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
-    
-    # D13 = readDetFile2(DATA_ROOT+"testing/dets.txt") # read detections from file
-    # # print(D13[0:20])
-    # # T_OFFSET = 20 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
-    # T_OFFSET = 1 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
-    # t_global = T_OFFSET # current time (frame)
-    # n = 0 # number of previous frames for trajectory init
-    # # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
-    # n_res = len(D13) - n # [TODO: handle properly (new t_global mechanics)]
-    # tr: list[Trajectory] = []
-    # n_solve = 5 # 20 # 'time window' - # of frames between trajectory selections
-    # # ------------------------------
-    
-    # frame = getFrameAtI(t_global,DATA_ROOT+"testing/")
-    # # cv.imshow("abc", frame)
-    # # cv.waitKey(0)
-    # h,w,_ = np.shape(frame)
-    # dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n)) # also pass time offset for using correct indices
-    # dspace.lastFrame = frame.copy()
-    # dspace.map=frame
-    
-    # # dspace.D.append([]) # skip zero, because frames are read from 1 on
-    # # dspace.D = D13[1:2]
-    # print("init dspace: ", dspace.D)
-    
-    
-    # # append detections
-    # D13_init = D13[T_OFFSET-n:T_OFFSET+1] # initial detection slice (relative to t_global; use previous n detections)
-    # # print(D13_init)
-    # # also compute color hists for them
-    # colorHist2Det(D13, DATA_ROOT+"testing/", T_OFFSET-n,T_OFFSET+1)
-    # hists = [d.color_hist for d in D13_init[0]]
-    # mean_hist = 0.5*hists[0]+0.5*hists[1]
-    # hists.append(mean_hist)
-    # showHists(hists=hists)
-    
-    # print(D13[T_OFFSET-n-5:T_OFFSET+5 ])
-
-    # for d in D13_init:
-    #     dspace.D.append(d)
-    #     print(d)
-
-    # dspace.showSpace(draw_dets=False)
-
-    # return
-    visualizeSaved()
-    return
-    Q = np.array([
- [ 88.39222222  ,-0.           ,-0.           ,-46.49611111  ,-0.            ,-0.           ,-0.          ,-0.           ,-0.           ,-0.        ],
- [ -0.          ,79.77444444   ,-0.           ,-0.           ,-0.            ,-0.           ,-0.          ,-29.99277778  ,-0.           ,-0.        ],
- [ -0.          ,-0.           ,-21.93888889  ,-0.           ,-8.99611111    ,-5.49722222   ,-0.          ,-0.           ,-5.49888889   ,-0.        ],
- [-46.49611111  ,-0.           ,-0.           ,90.69555556   ,-0.            ,-0.           ,-0.          ,-0.           ,-0.           ,-0.        ],
- [ -0.          ,-0.           ,-8.99611111   ,-0.           ,-28.00777778   ,-5.49722222   ,-0.          ,-0.           ,-5.49722222   ,-0.        ],
- [ -0.          ,-0.           ,-5.49722222   ,-0.           ,-5.49722222    ,-32.70555556  ,-0.          ,-0.           ,-5.49722222   ,-0.        ],
- [ -0.          ,-0.           ,-0.           ,-0.           ,-0.            ,-0.           ,5.19666667   ,-0.           ,-0.           ,-7.99888889],
- [ -0.          ,-29.99277778  ,-0.           ,-0.           ,-0.            ,-0.           ,-0.          ,60.68444444   ,-0.           ,-0.        ],
- [ -0.          ,-0.           ,-5.49888889   ,-0.           ,-5.49722222    ,-5.49722222   ,-0.          ,-0.           ,-25.80222222  ,-0.        ],
- [ -0.          ,-0.           ,-0.           ,-0.           ,-0.            ,-0.           ,-7.99888889  ,-0.           ,-0.           ,13.69555556]
-])
-    s=None
-    print(DetectionSpace.solveQBP(s,Q))
-    print(DetectionSpace.solveQBP2(s,Q))
-    return
+    # visualizeSaved()
 
     # INIT:
     # get through first n frames and initiate (hopefully) strong trajectories
 
     # init variables used in process
     D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
-    t_global = 0 # current time (frame)
-    n = 30
-    n_res = len(D13) - n
+    # print(D13[0:20])
+    # T_OFFSET = 20 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
+    T_OFFSET = 500 + 653 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
+    t_global = T_OFFSET # current time (frame)
+    n = 19 # number of previous frames for trajectory init
+    # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
+    n_res = len(D13) - n # [TODO: handle properly (new t_global mechanics)]
     tr: list[Trajectory] = []
-    n_solve = 20
+    n_solve = 5 # 20 # 'time window' - # of frames between trajectory selections
     # ------------------------------
     
-    t_global = 1
-    frame = getFrameAtI(t_global)
+    # INIT DSPACE
+    frame = getFrameAtI(t_global,DATA_ROOT+FRAMES_PATH)
     h,w,_ = np.shape(frame)
-    dspace = DetectionSpace(h,w)
+    dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n)) # also pass time offset for using correct indices
+    
+    # set last frame
+    dspace.lastFrame = frame.copy()
     dspace.map = frame
-    dspace.D.append([]) # skip zero, because frames are read from 1 on
+    
+    # dspace.D.append([]) # skip zero, because frames are read from 1 on
     # dspace.D = D13[1:2]
     print("init dspace: ", dspace.D)
     
     
     # append detections
-    for i in range(1,n):
-        dspace.D.append(D13[i])
-        t_global = t_global + 1
-    
-    # set last frame
-    frame = getFrameAtI(n-1)
-    dspace.lastFrame = frame.copy()
-    dspace.map = frame
+    D13_init = D13[T_OFFSET-n:T_OFFSET] # initial detection slice (relative to t_global; use previous n detections)
+    # also compute color hists for them
+    colorHist2Det(D13, DATA_ROOT+FRAMES_PATH, T_OFFSET-n,T_OFFSET)
+    print(D13[T_OFFSET-n-5:T_OFFSET+5 ])
 
+    for d in D13_init:
+        dspace.D.append(d)
+        print(d)
+    # print("l: ", len(dspace.D))
+    # print("---")
+    # END INIT DSPACE
+    
+    
     # build trajectories from all detectinos
     # 1. get list of all detections
     det_list = []
-    for dl in D13[1:n]:
+    for dl in D13_init:
+        # print(dl)
         for d in dl:
             det_list.append(d)
-    
+    # print("l: ", len(D13_init))
+    # print(det_list)
+    print("building: ")
     # 2. build them
     for i in range(0,len(det_list), 1):
+        # print(i)
         d = det_list[i]
-        new_tr = Trajectory(d, dspace)
+        new_tr: Trajectory = Trajectory(d, dspace)
+        # print(d)
         new_tr.build()
+        # print("end of bild, get score:")
+        new_tr.getScore(E1,E2) # calculate score of trajectory (Trajectory.S is set) (merit term used in matrix)
         tr.append(new_tr)
-    print(len(tr))
+        # input("continue?")
+    print("n_tr: ",len(tr))
 
-    # tr=np.array(tr)[[2,4,30,38,55,56]] # d=54.19555
+    # return
 
-    # print(tr[[0,1]], "has same dets? ", tr[0].basedOnSameDetections(tr[1]))
-    # print(tr[[0,2]], "has same dets? ", tr[0].basedOnSameDetections(tr[2]))
-
-
-    # tr = list(tr)
+    # drop redunant trajectories (ones that use same detections and have lower score than others with same detections)
+    tr = dropRedundant(tr, debug=False, recalculate=False) # no need to recalculate, because we already have calculated scores
     
     # choose best trajectories and draw them:
-    # v = selectBest(tr, dspace, True)
-    tr = dropRedundant(tr, debug=False) # kinda slow, but helps
-    # tr=np.array(tr)[[8,10,18,19,21]] # d=54.19555
-    # tr=np.array(tr)[[19,21]] # d=54.19555
-    
-    Q1 = dspace.buildQBPMatrix(tr, E1, E2)
-    Q2 = dspace.buildQBPMatrix2(tr, E1, E2)
-
-    print(Q1-Q2)
-
-
-    
-    # v = selectBest(tr, dspace, True)
-    # # v = np.ones(np.shape(v[0])) # select all
-    # tr_temp = getSelectedNvisualize(tr, v[0], dspace, True, True)
+    v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # already have scores
+    tr_temp = getSelectedNvisualize(tr, v[0], dspace, True, True)
     
     # keep only selected (only in init phase)
-    # tr = tr_temp
-    # print(tr)
-    # print(tr_temp)
-    # for t in tr:
-    #     print(t.id, ": ", t.D, " ... ")
+    tr = [tr_temp[0]]
+    print("tr: ",tr)
     # END INIT
+    
+    # EXTEND (step):
+    dspace.clearSpace()
+    dspace.showSpace(draw_dets=DRAW_DETS)
+    print("next time instant: ",t_global)
 
+    # tr_out = {}
     
 
     
+    try:
+        tr_save = []
+        if(SAVE_TRAJECTORIES):
+            tr_save.append((t_global-1,copy.deepcopy(tr))) # init trajectories to save
+        # on every new frame, do:
+        for i in range(n_res):
+            # 0. set new frame
+            frame = getFrameAtI(t_global,DATA_ROOT+FRAMES_PATH)
+            dspace.lastFrame = frame.copy()
+            dspace.map = frame
+
+            # 1. get detections in current frame
+            latest_dets = D13[t_global]
+
+            # ALSO CALCULATE DETECTIONS' COLOR HISTOGRAMS
+            for d in latest_dets:
+                updateDetColorHistFromFrame(d, frame)
+            # print("latest dets: ",latest_dets)
+            # -----------------------------------
+
+
+            dspace.D.append(latest_dets)
+
+            # print(latest_dets)
+
+                # tr_copies = [] # !
+            
+
+            # 2. try to extend existing trajectories
+            dspace.clearSpace()
+            for t in tr:
+                # check if possibly occluded; do e1Nc
+                if(t.possibly_occluded):
+                    possible_tr = t.e1Nc(n_empty=1)
+                    print(possible_tr)
+                    for tt in possible_tr:
+                        t.possible_next.append(tt)
+                        tt.getScore(E1,E2)
+                        # tr_special.append(tt)
+                    #     tt.getScore(E1,E2)
+                    # print(t.possible_next)
+                    # also extend possible next - [TODO]
+                    # t.getScore(E1,E2) # calculate score of existing trajectories (extended/extrapolated)
+                else:
+                    t.extend(n_empty=1)
+                    t.getScore(E1,E2) # calculate score of existing trajectories (extended/extrapolated)
+                    # tr_copies.append(copy.deepcopy(t)) # !
+            # dspace.showSpace(draw_dets=DRAW_DETS)
+            # dspace.clearSpace()
+
+            
+            # for i in range(len(tr)):
+            #     tr_og = tr[i]
+            #     tr_copy = tr_copies[i]
+                
+            #     print("tr_og: ")
+            #     print(tr_og, tr_og.D)
+                
+            #     print("tr_copy: ")
+            #     print(tr_copy, tr_copy.D)
+
+            #     # change D:
+            #     tr_og.D.add(Detection((0,0)))
+
+            #     print("added detection to og.d")
+
+            #     print("tr_og: ")
+            #     print(tr_og, tr_og.D)
+                
+            #     print("tr_copy: ")
+            #     print(tr_copy, tr_copy.D)
+                
+
+
+
+
+            for t in tr:
+                t.drawToSpace()
+                # also show possible occluded trajectory's possible next
+                if(t.possibly_occluded):
+                    for tt in t.possible_next:
+                        tt.drawToSpace([0,255,0])
+            dspace.showSpace(draw_dets=DRAW_DETS)
+
+            # 3. for every new detection, start new trajectory:
+            # for d in latest_dets:
+            #     tr_new_det = Trajectory(d, dspace)
+            #     tr_new_det.build()
+            #     tr_new_det.getScore(E1,E2) # calculate score of new trajectories
+            #     # check if redundant:
+            #     if(not checkIfRedundant(tr, tr_new_det, recalculate=False, debug=False)): # if it is not redundant, then add it, otherwise do not add
+            #         tr.append(tr_new_det)
+
+
+            # 4. trajectory pruning: if trajectory inactive*, remove it
+            # * inactive, if not updated for 10 consecutive frames
+
+            # on every n_solve-th frame, do hypothesis selection again:
+            print(i)
+            if(i%n_solve == 0):
+                if(SAVE_TRAJECTORIES):
+                    tr_save.append((t_global,copy.deepcopy(tr)))
+
+                v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # no need to recalculate, because they are updated
+                tr_temp = []
+                t_i = 0
+                for t in tr:
+                    if(v[0][t_i] == 1):
+                        print("-> ", end="", flush=True)
+                    print(t," holes_ref: ", t.holes_ref, " holes_total: ", t.holes, " nss: ", t.not_selected_strike)
+
+                    # pruning is actually happening here
+                    if(t.holes_ref < EXT_THR*2):
+                        if(t.holes_ref > PO_THR):
+                            t.possibly_occluded = True # !! <------------------------ POSSIBLY OCCLUDED IS SET HERE
+                        tr_temp.append(t)
+                        # if((t.S >= 0) or ((t.S < 0) and (-t.S <= len(t.X))) ):
+                        #     if(t.not_selected_strike > UNSELECTED_STRIKE_MAX):
+                        #         t.disable_grow = True
+                        #     # exclude discontinued trajectory from hypothesis selection
+                        #     else:
+                        #         tr_temp.append(t)
+
+                    t_i = t_i+1
+
+                    # handle special (possible occluded)
+                    if(t.possibly_occluded):
+                        print("possibly occluded: ", t, ":")
+                        print("possible next: ",t.possible_next)
+                        getSelectedNvisualize(t.possible_next, np.ones(len(t.possible_next)), dspace, separately=True, debug=True)
+
+                # tr = tr_temp
+                # keep only selected (only for testing purposes)
+                # tr_temp = getSelectedNvisualize(tr, v[0], dspace, separately=True, debug=True)
+                getSelectedNvisualize(tr, v[0], dspace, separately=True, debug=True)
+                tr = tr_temp
+
+            t_global = t_global + 1
+
+            # 195
+            # if(i == 190):
+            #     stopNwaitForKI()
+    except KeyboardInterrupt:
+        print("abort")
+        if(SAVE_TRAJECTORIES):
+            with open('hypotheses.p', 'wb') as fp: # fp: file pointer?
+                pickle.dump(tr_save, fp)
+    # END EXTEND
 
 
 # other mains:

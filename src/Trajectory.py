@@ -2,7 +2,8 @@ from __future__ import annotations # da delajo tut type hint-i znotraj istega cl
 import numpy as np
 from Detection import Detection, TDet
 import math
-from helper_func import detSet2map # helper functions
+import copy
+from helper_func import detSet2map, getTrColor, showHists, compareHists # helper functions
 
 # to avoid cyclic import (detection space imports trajectory, trajectory imports detection space)
 from typing import TYPE_CHECKING
@@ -21,8 +22,9 @@ class Trajectory:
         Trajectory.Tid = Trajectory.Tid+1
         self.detectionSpace = detectionSpace # pointer to detection space in which trajectory lives (has detections)
         
-        self.color = (np.random.rand(3)*150).astype(np.uint8)+10 # color of trajectory (for visualization)
-        self.color[2]=255
+        # self.color = (np.random.rand(3)*150).astype(np.uint8)+10 # color of trajectory (for visualization)
+        # self.color[2]=255
+        self.color = getTrColor()
         if(color is not None):
             self.color = color
         
@@ -39,10 +41,14 @@ class Trajectory:
         self.S = 0 # score/support of the trajectory - getScore
         self.holes = 0 # counter: how many trajectory points have been added considering only estimate of next detection
         
-        # pruning variables
+        # pruning variables, signals:
         self.holes_ref = 0 # holes reference: used to calculate relative number of holes (set to self.holes first, then calculate difference) (used in extend)
         self.not_selected_strike = 0 # number of times the trajectory has not been selected but is in hypothesis set
         self.disable_grow = False # flag: disable trajectory to grow (if not selected for a while)
+
+        self.possibly_occluded = False # if this is true, trajectory should be extended by e1Nc instead of extend
+        self.possible_next: list[Trajectory] = [] # this is list of trajectories that are possible after this one got occluded
+
         # -----------------
 
     # method estimates next position based on current position, velocity and orientation (theta)
@@ -222,7 +228,7 @@ class Trajectory:
         
         # next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1) !! IS THIS CORRECT? !! (collect around current)
         s_region_bias = td_current.k*self.holes_ref # search region bias: is added to extend search region (to recover from occlusion, hopefully)
-        s_region_bias = 0 # do not use bias
+        # s_region_bias = 0 # do not use bias
         next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred, s_region_bias) # collect around prediction
 
         self.detectionSpace.drawX(td_pred.x, 0.5)
@@ -268,6 +274,75 @@ class Trajectory:
             print(next_dets)
             print("next: ", td_next)
             print(self.X)
+    
+    # function collects next detections and extends (e1Nc - extend 1 and copy; returns list of new trajectories, that are extended by one detection)
+    # [TODO] - finish it
+    def e1Nc(self, debug=False, n_empty=-1) -> list[Trajectory]:
+        print("this is e1Nc")
+        # return False # [TODO] - not finished yet
+        # 1. find detections around last detection
+        # 2. estimate, add to trajectory, ...
+        dt = 1
+    
+        td_current: TDet = self.X[-1] # current (expects last detection to have most recent time (extrapolated TDet if not based on detections))
+        td_pred: TDet = self.estimateNext(td_current, dt) # prediction
+        
+        s_region_bias = td_current.k*self.holes_ref # search region bias: is added to extend search region (to recover from occlusion, hopefully)
+        # s_region_bias = 0 # do not use bias
+        next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred, s_region_bias, use_motion=False) # collect around prediction
+        
+        # debug info:
+        print("[e1Nc] next dets: ",next_dets, next_probs)
+        for d in next_dets:
+            print("comparing: ", d, td_current, ": ", compareHists(d.color_hist, td_current.color_hist))
+        # hists = [td_current.color_hist]
+        # for d in next_dets:
+        #     print("det:",d)
+        #     hists.append(d.color_hist)
+        #     # showHists()
+        # if(len(hists) > 0):
+        #     showHists(hists)
+        # else:
+        #     print("no histograms")
+        # ..
+            
+            
+
+        self.detectionSpace.drawX(td_pred.x, 0.5)
+        self.detectionSpace.drawDsearchRegionAroundDetection(td_pred.x, 15+td_pred.v+s_region_bias, 15+s_region_bias, td_pred.theta)
+        
+        possible_tr = []
+        if(len(next_dets) == 0): # no detections; just increase holes, holes_ref
+            self.holes_ref = self.holes_ref + 1 # simply add 1 (to relative)
+            self.holes = self.holes + 1
+        else: # has detections, for each detection, copy this trajectory and extend it with detection
+            for i in range(len(next_dets)):
+            # for d in next_dets:
+                # t_possible = copy.deepcopy(self) # copy of this trajectory
+                t_possible = self.getCopy() # copy of this trajectory
+                t_possible.holes = t_possible.holes-self.holes_ref # do not count holes from e1Nc
+                t_possible.holes_ref = 0 # reset holes counter
+                
+                # 3. estimate next detection: weighted mean of detections
+                d = next_dets[i]
+                dp = next_probs[i]
+                td_possible_next, _ = self.detectionSpace.estimateNext2(td_current, td_pred, [d], [dp], dt=dt)
+                
+                # 4. extend: add used detection to D, add new TDet to X
+                t_possible.D.add(d)
+                t_possible.X.append(td_possible_next)
+                possible_tr.append(t_possible)
+        
+        # might not need to add it (because)
+        td_next = TDet(td_current.x, td_pred.t, 0, td_current.theta)
+        # ALSO ADD COLOR MODEL
+        td_next.color_hist = td_current.color_hist
+        td_next.hasHist = td_current.hasHist
+        # -----------
+        self.X.append(td_next)
+
+        return possible_tr
+
 
     # method checks if trajectories is made from same points (some kind of equals)
     def basedOnSameDetections(self, t2: Trajectory) -> bool:
@@ -380,13 +455,33 @@ class Trajectory:
 
         q_ij = S_err * (-0.5)
         return q_ij
+    
+    # method returns copy of this trajectory
+    def getCopy(self) -> Trajectory:
+        t_ret = Trajectory(self.origin, self.detectionSpace)
+        
+        # things to not deepcopy
+        t_ret.S = self.S
+        t_ret.holes = self.holes
+        t_ret.holes_ref = self.holes_ref
+        t_ret.not_selected_strike = self.not_selected_strike
+        
+        # things to deepcopy
+        t_ret.D = copy.deepcopy(self.D)
+        t_ret.X = copy.deepcopy(self.X)
+
+        return t_ret
+        
         
 
     def __str__(self):
         disabled = ""
+        possibly_occluded = ""
         if(self.disable_grow):
             disabled = " (d)"
-        return "{t"+str(self.id)+", len="+str(len(self.X))+", S="+ f"{self.S:.4f}" +disabled+"}"
+        if(self.possibly_occluded):
+            possibly_occluded  = " (|?|)"
+        return "{t"+str(self.id)+", len="+str(len(self.X))+", S="+ f"{self.S:.4f}" +disabled+possibly_occluded+"}"
 
     def __repr__(self):
         return self.__str__()

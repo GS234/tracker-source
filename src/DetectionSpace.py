@@ -73,10 +73,15 @@ class DetectionSpace:
 
     # !!! POMEMBNO:
     # method calculates probability (score) of detection 
-    def getProb2(self, d:Detection, td:TDet, a=S1, b=S2) -> float:
-        motion_model_prob = self.getMotionModelProb(d,td,a,b)
-        color_model_prob = self.getColorModelProb(d,td)
-        return motion_model_prob*color_model_prob
+    def getProb2(self, d:Detection, td:TDet, a=S1, b=S2, use_motion=True, use_color=True) -> float:
+        ret_val = 1
+        if(use_motion):
+            motion_model_prob = self.getMotionModelProb(d,td,a,b)
+            ret_val = ret_val*motion_model_prob
+        if(use_color):
+            color_model_prob = self.getColorModelProb(d,td)
+            ret_val = ret_val*color_model_prob
+        return ret_val
         
 
     # methods to calculate probability of motion model and color model (used in getProb, getProb2)
@@ -146,7 +151,8 @@ class DetectionSpace:
     # collects detections within search region at time t (INFO: t is global time (t0 is not necessarily 0, so it is used to calculate offset: t0' = t0 - t_off))
     # returns: DETECTIONS (has changed from coordinates, as we need those objects for trajectories), their probabilities
     # region_bias: used to expand search region
-    def collectWithin(self, t:int, td: TDet, region_bias=0):
+    # use color/motion: parameters to pass on to method getProb2 (one can switch color model / motion model on or off)
+    def collectWithin(self, t:int, td: TDet, region_bias=0, use_motion=True, use_color=False):
         # search among detections in next time moment (next frame, that is (whichever, usually immediate successor (dt = 1)))
         next_detections = [] # store 'em in list
         next_detections_probs = [] # weights: sampled from distribution (bivariate normal dist, see Detection.getProb())
@@ -161,7 +167,7 @@ class DetectionSpace:
                     # print(d_i, " is within ", td)
                     next_detections.append(d_i) # store detections, for now
 
-                    detection_prob = self.getProb2(d_i, td)
+                    detection_prob = self.getProb2(d_i, td, use_motion=use_motion, use_color=use_color)
 
                     next_detections_probs.append(detection_prob) # get probability score from nearby point
         
@@ -503,7 +509,7 @@ class DetectionSpace:
         incIndVec(v, rev=True) # start with 1 selected, not with 0
         
 
-        # 2. find maximum by calculating all possible combinations (brute force method, should try something else in the future - [TODO])
+        # 2. find maximum by calculating all possible combinations (brute force method, should use solveQBP2)
         maximum = 0
         max_v = 1
         i=0

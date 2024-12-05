@@ -354,14 +354,14 @@ class DetectionSpace:
         # print(image)
         # 2. draw horizontally:
         for i in range(w):
-            x_i, y1_i, y2_i = x+i, y, y+h
+            # x_i, y1_i, y2_i = x+i, y, y+h
 
             points.append((x+i, y))
-            points.append((x+i, y+h))
+            points.append((x+i+1, y+h))
 
         # 3. draw vertically:
         for i in range(h):
-            points.append((x, y+i))
+            points.append((x, y+i+1))
             points.append((x+w, y+i))
         coords2map(points, self.map, color=GREEN, overwrite=True)
 

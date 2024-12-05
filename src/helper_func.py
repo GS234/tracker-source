@@ -37,6 +37,7 @@ def detections2map(D, map, color: list = [255,255,255]): # draws detections
 
 def coords2map(X, map, color: list = [255,255,255], overwrite=True):
     h,w,_ = np.shape(map)
+    # print("X: ",X)
     for point in X:
         x, y = point
         x = x%h
@@ -44,6 +45,7 @@ def coords2map(X, map, color: list = [255,255,255], overwrite=True):
         
         
         if(overwrite or np.sum(map[x,y]) == 0):
+            # print(x,y)
             map[x,y] = color
 
 
@@ -214,10 +216,13 @@ def bbDet2Det(bb: tuple, t: int = 0):
     return Detection([x,y], t=t, bb=bb)
 
 # function reads i-th frame
-def getFrameAtI(i: int, path: str):
+def getFrameAtI(i: int, path: str, toBGR=False):
     frame_i = f'{i:08}'
     frame = cv.imread(path+str(frame_i)+".jpg")
-    return frame
+    if(toBGR):
+        return cv.cvtColor(frame, cv.COLOR_RGB2BGR)
+    else:
+        return frame
 
 def showHists(hists:list, c=1):
     color = ['b','g','r']

@@ -19,6 +19,13 @@ class DetectionSpace:
         # self.map = np.zeros((n,n)).astype(np.float32) # init empty map (old way)
         self.lastFrame = np.zeros((h,w,3)).astype(np.uint8) # last frame (contains no drawings)
         self.map = np.zeros((h,w,3)).astype(np.uint8) # init empty map
+        
+        self.flow_img = np.zeros((h,w,3)).astype(np.uint8) # optical flow image (for visualization)
+        self.last_flow_img = np.zeros((h,w,3)).astype(np.uint8)
+        
+        self.flow_map = np.zeros((h,w,2)).astype(np.uint8) # optical flow
+        self.use_flow = True # flag: use optical (also show it)
+        
         self.exit_zone = EXIT_ZONE_OFFSET # offset from edge
         self.hw = (h,w) # map size (dimensions)
         self.window_name = "detection space"
@@ -120,11 +127,12 @@ class DetectionSpace:
         off = self.exit_zone
         exit_zone_color=[0,255,255]
         ul,bl,ur,br = (off,off),(off,self.hw[0]-off),(self.hw[1]-off, off),(self.hw[1]-off, self.hw[0]-off)
-        self.drawLine(ul,bl,color=exit_zone_color)
-        self.drawLine(ul,ur,color=exit_zone_color)
-        self.drawLine(ur,br,color=exit_zone_color)
-        self.drawLine(bl,br,color=exit_zone_color)
+        drawLine(self.map, ul,bl,color=exit_zone_color)
+        drawLine(self.map, ul,ur,color=exit_zone_color)
+        drawLine(self.map, ur,br,color=exit_zone_color)
+        drawLine(self.map, bl,br,color=exit_zone_color)
 
+        
         if(self.D):
             if(draw_dets):
                 for d in self.D:
@@ -134,10 +142,23 @@ class DetectionSpace:
             # print(last_dets)
             # print()
             for d in last_dets: # draw bounding boxes around last detections
-                self.drawBoundingBox(d.bb)
-                self.drawX(d.x,1.0)
+                drawBoundingBox(self.map, d.bb)
+                drawX(self.map, d.x)
+                if(self.use_flow):
+                    drawBoundingBox(self.flow_img, d.bb)
+                    drawX(self.flow_img, d.x)
+                    # draw also line in which direction is region moving
+                    
+
+                    y, x, h, w = d.bb
+                    flow_region = self.flow_map[x:x+w+1,y:y+h+1] # bounding box image
+                    motion_vec = getMotionVec(flow_region)
+                    drawLine(self.flow_img, d.x, (d.x + 10*motion_vec), [0,255,255])
+
         # print(map)
         # print(self.map)
+        if(self.use_flow):
+            cv.imshow(self.window_name+" - optical flow", self.flow_img)
         cv.imshow(self.window_name, self.map)
         cv.waitKey(0)
         # while cv.getWindowProperty(self.window_name, cv.WND_PROP_VISIBLE) >= 1:
@@ -147,6 +168,7 @@ class DetectionSpace:
     # method clears detection space of all other things except for detections and last detections' boundingboxes
     def clearSpace(self):
         self.map = self.lastFrame.copy()
+        self.flow_img = self.last_flow_img.copy()
 
     # collects detections within search region at time t (INFO: t is global time (t0 is not necessarily 0, so it is used to calculate offset: t0' = t0 - t_off))
     # returns: DETECTIONS (has changed from coordinates, as we need those objects for trajectories), their probabilities
@@ -303,68 +325,6 @@ class DetectionSpace:
         bounds = np.dot(bounds, [[0,1],[1,0]]) # flip coordinates
         coords2map(bounds, self.map, color=[255,0,255])
     
-    # method draws x instead of .
-    def drawX(self, c:list, brightness=0.5) -> None:
-        x_shape = np.array([
-            [-3,-3],
-            [-2,-2],
-            [-1,-1],
-            [0,0],
-            [1,1],
-            [2,2],
-            [3,3],
-            [-3,3],
-            [-2,2],
-            [-1,1],
-            [1,-1],
-            [2,-2],
-            [3,-3],
-        ])
-        x_shape = x_shape + c # add origin
-        p_list = [(x[1], x[0]) for x in x_shape]
-        coords2map(p_list, self.map, color=X_FFFFFF)
-    
-    def drawLine(self, x1, x2, color=[0,0,255]):
-        x1 = np.array(x1)
-        x2 = np.array(x2)
-        n = (x2 - x1) # normal from x1 to x2
-        # print(n.reshape( (2,1) ))
-        n_len = np.sqrt(np.dot(n.T,n))
-        if(n_len == 0): # if the same point, no need to draw :)
-            return
-        n = n/n_len
-        n = n.reshape((2,1))
-        
-        values = np.arange(0, int(n_len), 0.1)
-        values = values.reshape((1,len(values)))
-        
-        points = np.dot(n, values) + x1.reshape((2,1))
-        p_list = [(int(x[1]), int(x[0])) for x in points.T]
-        coords2map(p_list, self.map, color=color, overwrite=True)
-    
-    # method draws bounding box in detection space
-    def drawBoundingBox(self, bb: tuple, color: list = X_FFFFFF) -> None:
-        # print(W, H)
-        # 1. starting coordinate:
-        y, x, h, w = bb
-        # print(bb)
-
-        points = []
-
-        # print(image)
-        # 2. draw horizontally:
-        for i in range(w):
-            # x_i, y1_i, y2_i = x+i, y, y+h
-
-            points.append((x+i, y))
-            points.append((x+i+1, y+h))
-
-        # 3. draw vertically:
-        for i in range(h):
-            points.append((x, y+i+1))
-            points.append((x+w, y+i))
-        coords2map(points, self.map, color=GREEN, overwrite=True)
-
     # should be used for visualization only, is slow (O( (2*max(S1, S2)) ^2))
     def drawProbDistAroundDetection(self, x):
         # draw probability distribution function within detection area:

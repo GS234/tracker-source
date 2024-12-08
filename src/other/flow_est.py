@@ -213,7 +213,7 @@ def viz(img, flo, dets: list[Detection]=[]):
     cv2.waitKey()
 
 
-def demo(args):
+def computeFlow(args):
     model = torch.nn.DataParallel(RAFT(args))
     model.load_state_dict(torch.load(args.model))
 
@@ -292,7 +292,7 @@ if __name__ == '__main__':
 
     im_fl_read = None
     if(CALCULATE_FLOW):
-        demo(args)
+        computeFlow(args)
     
     with open(ESTIMATES_ROOT+ESTIMATES_FILE, 'rb') as fp:
         im_fl_read = pickle.load(fp)

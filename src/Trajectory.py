@@ -3,7 +3,7 @@ import numpy as np
 from Detection import Detection, TDet
 import math
 import copy
-from helper_func import detSet2map, getTrColor, showHists, compareHists # helper functions
+from helper_func import detSet2map, getTrColor, showHists, compareHists, drawX, drawLine # helper functions
 
 # to avoid cyclic import (detection space imports trajectory, trajectory imports detection space)
 from typing import TYPE_CHECKING
@@ -143,14 +143,14 @@ class Trajectory:
             color = self.color
         x_brightness = 1.0
         if(len(self.X) > 0): # if has one
-            self.detectionSpace.drawX(self.X[0].x, x_brightness)
+            drawX(self.detectionSpace.map, self.X[0].x, x_brightness)
         if(len(self.X) > 1): # if has many
             for i in range(len(self.X)-1):
                 xi = self.X[i].x
                 xi1 = self.X[i+1].x
-                self.detectionSpace.drawLine(xi,xi1,color)
+                drawLine(self.detectionSpace.map, xi,xi1,color)
                 # self.detectionSpace.drawDsearchRegionAroundDetection(xi1)
-            self.detectionSpace.drawX(self.X[-1].x, x_brightness)
+            drawX(self.detectionSpace.map, self.X[-1].x, x_brightness)
     
     # POMEMBNO!! MOGOCE DELA NAROBE (klicemo iz build qbp matrix)
     # method calculates CUMULATIVE "error" of ALL detections around estimated trajectory point in time t (is this ok?)
@@ -231,7 +231,7 @@ class Trajectory:
         # s_region_bias = 0 # do not use bias
         next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred, s_region_bias) # collect around prediction
 
-        self.detectionSpace.drawX(td_pred.x, 0.5)
+        drawX(self.detectionSpace.map, td_pred.x, 0.5)
         self.detectionSpace.drawDsearchRegionAroundDetection(td_pred.x, 15+td_pred.v+s_region_bias, 15+s_region_bias, td_pred.theta)
         
         add_estimate = True # if this is true, then estimate next value with method, else add detection with posiiton of last detection and velocity 0 (as if it did not move)
@@ -308,7 +308,7 @@ class Trajectory:
             
             
 
-        self.detectionSpace.drawX(td_pred.x, 0.5)
+        drawX(self.detectionSpace.map, td_pred.x, 0.5)
         self.detectionSpace.drawDsearchRegionAroundDetection(td_pred.x, 15+td_pred.v+s_region_bias, 15+s_region_bias, td_pred.theta)
         
         possible_tr = []

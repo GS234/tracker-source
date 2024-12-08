@@ -5,6 +5,12 @@ import random
 import pickle
 from matplotlib import pyplot as plt
 
+import sys
+sys.path.append('../RAFT/core') # raft stuff
+from raft import RAFT
+from utils import flow_viz
+from utils.utils import InputPadder
+
 # takes list of tuples, returns list of detections
 def coords2detect(X):
     return [Detection(x) for x in X]
@@ -142,6 +148,37 @@ def readDetFile2(filename: str):
             frame_i = frame_i + 1
     return detections
 
+# OPTICAL FLOW HELPER FUNCTIONS:
+def readFlowFile(filename: str):
+    with open(filename, 'rb') as fp:
+        flow = pickle.load(fp)
+        return flow
+
+def flow2img(flow):
+    flo = flow_viz.flow_to_image(flow)
+    return flo
+
+# function takes region of optical flow map and calculates displacement vector (median of all pixels within bb)
+def getMotionVec(flo_region, mean=False):
+    flo_reg_resh = flo_region.reshape((-1,2))
+    # print(flo_reg_resh)
+    vec=[0,0]
+    if(mean):
+        vec = np.mean(flo_reg_resh,axis=0)
+        print("mean: ",vec)
+    else:
+        vec = np.median(flo_reg_resh,axis=0)
+        print("median: ",vec)
+    max = np.amax(flo_reg_resh, axis=0)
+    print("max: ", max)
+    return vec
+
+def getFlowAtI(i, path):
+    frame_i = f'{i:08}'
+    return np.load(path+frame_i+".npy")
+# ------------------------------------
+
+
 # function adds color histograms to detections (separate function for convenience (frames have different path))
 def colorHist2Det(dets: list[list[Detection]], path: str, begin:int = 0, end: int = -1, n_bins=8):
     if(end < begin):
@@ -170,12 +207,17 @@ def colorHist2Det(dets: list[list[Detection]], path: str, begin:int = 0, end: in
 def updateDetColorHistFromFrame(det: Detection, frame, n_bins=8):
     y, x, h, w = det.bb
     frame_bb = frame[x:x+w+1,y:y+h+1] # bounding box image
+    # frame_bb2 = getRect(frame, np.array([y,x]), np.array([y+h, x+w]))
+    # print(np.array(frame_bb) - np.array(frame_bb2))
     det.color_hist = getColorHist(frame_bb,n_bins=n_bins)
     det.hasHist = True
 
-            
+# function returns rectangular region around detection (crop bounding box)
+def getRect(img, ul, dr):
+    wh = dr-ul # dx, dy
+    return img[ul[1]:ul[1]+wh[1]+1, ul[0]:ul[0]+wh[0]+1]
 
-# method calculates color histogram from current frame's detecitons
+# function calculates color histogram from current frame's detecitons
 def getColorHist(frame_bb, n_bins=8):
     color_hist = np.zeros((n_bins, n_bins, n_bins))
     # 1. put each pixel to its corresponding bin
@@ -257,6 +299,66 @@ if __name__ == "__main__":
 def getTrColor():
     return tr_colors[int(random.random()*len(tr_colors))]
 
+# drawing functions (previously in DetectionSpace):
+
+# method draws x instead of .
+def drawX(image, c:list, color=[255,255,255]) -> None:
+    x_shape = np.array([
+        [-3,-3],
+        [-2,-2],
+        [-1,-1],
+        [0,0],
+        [1,1],
+        [2,2],
+        [3,3],
+        [-3,3],
+        [-2,2],
+        [-1,1],
+        [1,-1],
+        [2,-2],
+        [3,-3],
+    ])
+    x_shape = x_shape + c # add origin
+    p_list = [(x[1], x[0]) for x in x_shape]
+    coords2map(p_list, image, color=color)
+
+def drawLine(image, x1, x2, color=[0,0,255]):
+    x1 = np.array(x1)
+    x2 = np.array(x2)
+    n = (x2 - x1) # normal from x1 to x2
+    # print(n.reshape( (2,1) ))
+    n_len = np.sqrt(np.dot(n.T,n))
+    if(n_len == 0): # if the same point, no need to draw :)
+        return
+    n = n/n_len
+    n = n.reshape((2,1))
+    
+    values = np.arange(0, int(n_len), 0.1)
+    values = values.reshape((1,len(values)))
+    
+    points = np.dot(n, values) + x1.reshape((2,1))
+    p_list = [(int(x[1]), int(x[0])) for x in points.T]
+    coords2map(p_list, image, color=color, overwrite=True)
+
+# method draws bounding box in detection space
+def drawBoundingBox(image, bb: tuple, color: list = [0,255,0]) -> None:
+    # print(W, H)
+    # 1. starting coordinate:
+    y, x, h, w = bb
+    points = []
+
+    # 2. draw horizontally:
+    for i in range(w):
+        # x_i, y1_i, y2_i = x+i, y, y+h
+
+        points.append((x+i, y))
+        points.append((x+i+1, y+h))
+
+    # 3. draw vertically:
+    for i in range(h):
+        points.append((x, y+i+1))
+        points.append((x+w, y+i))
+    coords2map(points, image, color=color, overwrite=True)
 
 tr_colors=[
     (158,98,64),
@@ -281,5 +383,39 @@ tr_colors=[
     (177,204,116)
 ]
 
+
+# def viz(img, flo, dets: list[Detection]=[]):
+#     flo_og = flo.copy()
+    
+#     # map flow to rgb image
+#     # print(np.shape(flo_og))
+#     flo = flow_viz.flow_to_image(flo_og)
+    
+#     if(len(dets) != 0):
+#         ii=0
+#         for d in dets:
+#             ul = np.array([d.bb[0],d.bb[1]])
+#             dr = np.array([d.bb[0]+d.bb[2],d.bb[1]+d.bb[3]])
+#             center = np.array([d.bb[0]+d.bb[2]//2,d.bb[1]+d.bb[3]//2]).astype(np.int32)
+#             print(dr)
+#             img_2 = getRect(flo, ul,dr)
+#             flo_2 = getRect(flo_og, ul, dr)
+#             res = getMotionVec(flo_2, mean=False) # uses median
+#             # res = getMotionVec(flo_2, mean=True)
+#             print(str(ii)+": ",res)
+            
+#             coords2map(getLinePoints(center, (center+(res*10).astype(np.int32))), flo)
+#             coords2map(getX(center),flo, [0,0,0])
+#             # cv2.imshow('rect '+str(ii), img_2)
+#             ii = ii + 1
+#         for d in dets:
+#             ul = np.array([d.bb[0],d.bb[1]])
+#             dr = np.array([d.bb[0]+d.bb[2],d.bb[1]+d.bb[3]])
+#             coords2map(getRectBounds(ul,dr), img, [150,150,150])
+#             coords2map(getRectBounds(ul,dr), flo, [0,0,0])
+    
+#     cv2.imshow('image', (img[:, :, [2,1,0]]).astype(np.uint8))
+#     cv2.imshow('flow', (flo[:, :]).astype(np.uint8))
+#     cv2.waitKey()
 
 

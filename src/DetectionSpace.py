@@ -5,6 +5,7 @@ from Detection import Detection, TDet
 import cv2 as cv
 from helper_func import * # helper functions
 from collections import deque # for queue (de - double ended)
+import math
 
 
 # global vars:
@@ -16,6 +17,8 @@ EXIT_ZONE_OFFSET = 5
 
 class DetectionSpace:
     def __init__(self, h,w, D: list = None, time_offset = 0):
+        self.s1, self.s2 = S1, S2 # so uncivilized, but necessary
+
         # self.map = np.zeros((n,n)).astype(np.float32) # init empty map (old way)
         self.lastFrame = np.zeros((h,w,3)).astype(np.uint8) # last frame (contains no drawings)
         self.map = np.zeros((h,w,3)).astype(np.uint8) # init empty map
@@ -23,7 +26,8 @@ class DetectionSpace:
         self.flow_img = np.zeros((h,w,3)).astype(np.uint8) # optical flow image (for visualization)
         self.last_flow_img = np.zeros((h,w,3)).astype(np.uint8)
         
-        self.flow_map = np.zeros((h,w,2)).astype(np.uint8) # optical flow
+        self.flow_map = np.zeros((h,w,2)).astype(np.uint8) # optical flow (outta this frame)
+        self.flow_to = np.zeros((h,w,2)).astype(np.uint8) # optical flow (into this frame (last flow_map))
         self.use_flow = True # flag: use optical (also show it)
         
         self.exit_zone = EXIT_ZONE_OFFSET # offset from edge
@@ -35,6 +39,7 @@ class DetectionSpace:
         self.D: list[list[Detection]] = [] # detections (2d array, 1st dim. is time, subarrays contain detections)
         if D is not None:
             self.D.append(D) # append detections at time t = 0
+    
     
     # detection-specific methods (MIGHT NEED TO MOVE THEM ELSEWHERE [TODO: consider doing so!])
     # calculates rotation matrix based on detection orientation (calculate each time, as theta might change)
@@ -127,6 +132,7 @@ class DetectionSpace:
         off = self.exit_zone
         exit_zone_color=[0,255,255]
         ul,bl,ur,br = (off,off),(off,self.hw[0]-off),(self.hw[1]-off, off),(self.hw[1]-off, self.hw[0]-off)
+        ul,bl,ur,br = np.array(ul),np.array(bl),np.array(ur),np.array(br)
         drawLine(self.map, ul,bl,color=exit_zone_color)
         drawLine(self.map, ul,ur,color=exit_zone_color)
         drawLine(self.map, ur,br,color=exit_zone_color)
@@ -150,11 +156,12 @@ class DetectionSpace:
                     # draw also line in which direction is region moving
                     
 
-                    y, x, h, w = d.bb
-                    flow_region = self.flow_map[x:x+w+1,y:y+h+1] # bounding box image
-                    motion_vec = getMotionVec(flow_region)
+                    # y, x, h, w = d.bb
+                    # flow_region = self.flow_map[x:x+w+1,y:y+h+1] # bounding box image
+                    # motion_vec = getMotionVec(flow_region)
+                    motion_vec = getDetMotionVector(d, self.flow_map)
                     drawLine(self.flow_img, d.x, (d.x + 10*motion_vec), [0,255,255])
-
+                    
         # print(map)
         # print(self.map)
         if(self.use_flow):
@@ -188,9 +195,7 @@ class DetectionSpace:
                 if(self.isWithin(d_i.x, td.x, a = S1+td.v+region_bias, b=S2+region_bias, theta=td.theta)):
                     # print(d_i, " is within ", td)
                     next_detections.append(d_i) # store detections, for now
-
                     detection_prob = self.getProb2(d_i, td, use_motion=use_motion, use_color=use_color)
-
                     next_detections_probs.append(detection_prob) # get probability score from nearby point
         
         return next_detections, next_detections_probs
@@ -205,7 +210,8 @@ class DetectionSpace:
     # estimate next point in trajectory
     # input: last detection (for reference: estimate velocity, ...), predicted position, collected detections and their probabilities
     # output: estimated detection
-    def estimateNext2(self, d_last: TDet, d_pred: TDet, next_detections: list[Detection], next_detections_probs: list[float], dt=1) -> TDet:
+    # use_flow: method uses optical flow data to estimate next prediction
+    def estimateNext2(self, d_last: TDet, d_pred: TDet, next_detections: list[Detection], next_detections_probs: list[float], dt=1, use_flow=False) -> tuple[TDet, TDet]:
         x_p = d_pred # predicted detection
         x_t = d_last # last detection in trajectory
         t_i1 = x_t.t+dt # next time
@@ -230,18 +236,15 @@ class DetectionSpace:
         x_t1 = np.array((1/Z) * ( p_tempDisc * x_p.x + np.dot(next_detections_probs, next_detections_X) )).astype(np.int32)
 
         # 2. also estimate velocity, angle (based on x_t+1: no need to calculate weights, estimates again, as they are the same)
-
-        # velocity:
+        # theta, velocity:
         x_dif = x_t1 - x_t.x
         x_dif = x_dif/dt # we do that here, velocity is then simply it's length
-        v_t1 = np.sqrt(np.dot(x_dif,x_dif))
 
-        # theta:
         # calculate relative to unit base vector x_i = [1,0]
-        theta_t1 = d_last.theta
-        if(v_t1 != 0): # only if it has speed this is relevant
-            cos_theta = x_dif[0] / v_t1  # this is it, just trust me bro
-            theta_t1 = np.arccos(cos_theta) # co-domain is only from 0-pi, not a problem, because ellipse is symmetrical (so essentially v ~ -v)
+        v_t1, theta_t1 = getVecMagAng(x_dif)
+        if(v_t1 == 0): # if it has got no speed, use previous theta
+            theta_t1 = d_last.theta
+
         if(x_dif[1] < 0): # same angle is computed for both sides, because we only compare magnitude, so correction is needed in some cases
             theta_t1 = -theta_t1
         
@@ -252,7 +255,55 @@ class DetectionSpace:
         d_t1.color_hist = color_hist_est
         d_t1.hasHist = True
         return (d_t1,x_p)
+    
+    # method to estimate next using optical flow
+    def estimateNext2UsingFlow(self, d_last: TDet, d_pred: TDet, next_detections: list[Detection], next_detections_probs: list[float], dt=1, use_flow=False):
+        print("this is estimateNext2 that uses optical flow to get next trajectory point:")
+        # assume all detections have optical flow estimate
 
+        x_p = d_pred # predicted detection
+        x_t = d_last # last detection in trajectory
+        t_i1 = x_t.t+dt # next time
+
+        # change list of detections to matrix of detections coordinates
+        n_det = len(next_detections) # number of detections (i)
+        next_detections_X = np.zeros((n_det, 2))
+        # end of prologue
+        
+        next_detections_hist_weighted_sum = d_last.color_hist # init with current model
+
+        # optical flow:
+        flow_vec = x_p.x
+        if(n_det > 0):
+            avg_flow = np.array([0.0,0.0])
+            for i in range(n_det):
+                if(next_detections[i].hasHist): # color model (histogram)
+                    next_detections_hist_weighted_sum = next_detections_hist_weighted_sum + next_detections[i].color_hist*next_detections_probs[i] # do everything in one go
+                if(next_detections[i].has_flow_vector): # optical flow
+                    avg_flow = avg_flow+next_detections[i].flow_vector
+            avg_flow = avg_flow/n_det
+            flow_vec = avg_flow
+        
+        # temporal discount, as used in paper [pami, leibe et al. ...] = e^-lambda
+        L = 40 # lambda: temporal discount
+        p_tempDisc = np.exp(-L)
+        Z = np.sum(next_detections_probs)+p_tempDisc
+
+        x_t1 = (x_t.x+flow_vec).astype(np.int32)
+        v_t1, theta_t1 = getVecMagAng(flow_vec)
+
+        # appearance model: weighted sum of all models (did that above):
+        color_hist_est = (1/(Z-p_tempDisc+1)) * next_detections_hist_weighted_sum # +1? current color model has weight 1 (maybe should be made differently)
+        
+        # epilogue: construct next tdet, return it
+        d_t1 = TDet(x_t1,t_i1,v_t1,theta_t1) # next detection, it should probably be something else
+        d_t1.color_hist = color_hist_est
+        d_t1.hasHist = True
+
+        # a,b = self.estimateNext2(d_last, d_pred, next_detections, next_detections_probs, dt) # return same thing as estimateNext2 would, for now
+        return (d_t1,x_p)
+        
+        
 
 
     # !!! POMEMBNO [TODO - fix/adjust/modify/test]
@@ -314,7 +365,7 @@ class DetectionSpace:
     # ----------------------------------
         
     
-    def drawDsearchRegionAroundDetection(self, x, a=None, b=None, theta=None):
+    def drawDsearchRegionAroundDetection(self, x, a=None, b=None, theta=None, color=[255,0,255]):
         # bounds = D.getSearchRegionBounds()
         s1, s2 = S1,S2
         if((b is not None) and (a is not None)):
@@ -323,7 +374,7 @@ class DetectionSpace:
             theta = 0
         bounds = self.getSearchRegionBounds(x,s1,s2, theta)
         bounds = np.dot(bounds, [[0,1],[1,0]]) # flip coordinates
-        coords2map(bounds, self.map, color=[255,0,255])
+        coords2map(bounds, self.map, color=color)
     
     # should be used for visualization only, is slow (O( (2*max(S1, S2)) ^2))
     def drawProbDistAroundDetection(self, x):

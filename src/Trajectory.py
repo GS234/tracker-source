@@ -3,12 +3,15 @@ import numpy as np
 from Detection import Detection, TDet
 import math
 import copy
-from helper_func import detSet2map, getTrColor, showHists, compareHists, drawX, drawLine # helper functions
+from helper_func import detSet2map, getTrColor, showHists, compareHists, drawX, drawLine, drawBoundingBox, getVecMagAng, getMotionVec, getRect, getRectBb # helper functions
+import cv2 as cv
 
 # to avoid cyclic import (detection space imports trajectory, trajectory imports detection space)
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from DetectionSpace import DetectionSpace
+
+FLOW_WINDOW_SIZE = 10
 
 class Trajectory:
     # assumptions:
@@ -63,6 +66,30 @@ class Trajectory:
         nextTDet.hasHist = td_current.hasHist
         return nextTDet
     
+    # method estimates next position using optical flow (is better to have separate method, maybe could also make wrapper)
+    # [TODO] test it if works correctly
+    def estimateNextUsingFlow(self, td_current: TDet, dt: int = 1) -> TDet:
+        x = td_current.x
+        t = td_current.t
+        
+        # get displacement vector:
+        rect_a = FLOW_WINDOW_SIZE # 10*10 neighbourhood
+        bb_x, bb_y = td_current.x[0]-rect_a//2, td_current.x[1]-rect_a//2
+        bb = (bb_x, bb_y, rect_a, rect_a)
+        flow_region = getRectBb(bb, self.detectionSpace.flow_map)
+        flow_vec2 = (getMotionVec(flow_region))
+        drawBoundingBox(self.detectionSpace.map, bb, [0,255,255])
+
+        # construct next detection
+        next_v,next_theta = getVecMagAng(flow_vec2)
+        x_next = x+flow_vec2*dt
+
+        nextTDet = TDet(x_next, t+dt, next_v,next_theta)
+        nextTDet.color_hist = td_current.color_hist # assume current appearance
+        nextTDet.hasHist = td_current.hasHist
+        return nextTDet
+        
+    
     # method builds trajectory and returns list of trajectory detections (and holes)
     # HOLES: allow up to n holes, if no detections after n frames, discontinue (also delete all predictions); also prune tails from both ends
     def connectPoints(self, td_orig: TDet, dt=1) -> list[TDet]:
@@ -107,6 +134,7 @@ class Trajectory:
             # 3. estimate next detection: weighted mean of detections
             # d_next, _ = self.estimateNext(t)
             td_next, _ = self.detectionSpace.estimateNext2(td_current, td_pred, next_dets, next_probs, dt=dt)
+            # td_next, _ = self.detectionSpace.estimateNext2UsingFlow(td_current, td_pred, next_dets, next_probs, dt=dt)
             
             # 4. add calculated estimate to list
             td_connected.append(td_next)
@@ -147,7 +175,12 @@ class Trajectory:
         if(len(self.X) > 1): # if has many
             for i in range(len(self.X)-1):
                 xi = self.X[i].x
-                xi1 = self.X[i+1].x
+                di1 = self.X[i+1] # next detection
+                if(di1.color is not None):
+                    color=di1.color
+                else:
+                    color = self.color
+                xi1 = di1.x
                 drawLine(self.detectionSpace.map, xi,xi1,color)
                 # self.detectionSpace.drawDsearchRegionAroundDetection(xi1)
             drawX(self.detectionSpace.map, self.X[-1].x, x_brightness)
@@ -342,9 +375,103 @@ class Trajectory:
         self.X.append(td_next)
 
         return possible_tr
+    
+    # OPTICAL FLOW SPECIFIC METHODS:
+    
+    # like extend, but uses optical flow to create smoother trajectories (idea: use flow when detections are near, if further, jump to detection)
+    def extend2(self, debug=False, n_empty=-1):
+        if(self.disable_grow):
+            return
+        # 1. find detections around last detection
+        # 2. estimate, add to trajectory, ...
+        dt = 1
+    
+        td_current: TDet = self.X[-1] # current
+        td_pred: TDet = self.estimateNextUsingFlow(td_current, dt) # prediction #### use flow!
+        
+        
+        # next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_current) # collect in next frame (t+1) !! IS THIS CORRECT? !! (collect around current)
+        s_region_bias = td_current.k*self.holes_ref # search region bias: is added to extend search region (to recover from occlusion, hopefully)
+        # s_region_bias = 0 # do not use bias
+        next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred, s_region_bias) # collect around prediction
+
+        drawX(self.detectionSpace.map, td_pred.x, 0.5)
+        s1, s2 = self.detectionSpace.s1,self.detectionSpace.s2
+        self.detectionSpace.drawDsearchRegionAroundDetection(td_pred.x, s1+td_pred.v+s_region_bias, s2+s_region_bias, td_pred.theta)
+        
+        has_dets = False
+        if(len(next_dets) == 0): # hole
+            self.holes_ref = self.holes_ref + 1 # simply add 1 (to relative)
+            self.holes = self.holes + 1
+        else: # has detections
+            # add detections (objects, not just coords) to trajectory detections set (for intersections with other trajectories)
+            self.D.update(next_dets)
+            self.holes_ref = 0 # reset holes_ref (logic in if block needs this)
+            has_dets = True
+        
+        td_next = td_pred
+        self.detectionSpace.drawDsearchRegionAroundDetection(td_pred.x, s1+td_pred.v, s2, td_pred.theta, [0,255,255]) # to visualize
+        if(has_dets):
+            # # 3. estimate next detection: weighted mean of detections
+            td_possibly_next, _ = self.detectionSpace.estimateNext2(td_current, td_pred, next_dets, next_probs, dt=dt)
+            
+            # check distance; if greater than FLOW_WINDOW_SIZE, then jump to td_next,else just use flow (smoothing trajectory)
+
+            # if(dist >= FLOW_WINDOW_SIZE*self.detectionSpace.s1): ## somehow should determine this size # not ok, should search within 
+            
+            if(not self.detectionSpace.isWithin(td_possibly_next.x, td_pred.x, a = s1+td_pred.v, b=s2, theta=td_pred.theta)):
+                td_possibly_next.color = [0,0,255] # so that path gets different color
+                td_next = td_possibly_next
+            
+        # # 4. add calculated estimate to list (trajectory)
+        self.X.append(td_next)
+
+    def extendUsingFlow2(self, n_empty=-1):
+        # print("this is extend using flow 2")
+        if(self.disable_grow):
+            return
+        # 1. find detections around last detection
+        # 2. estimate, add to trajectory, ...
+        dt = 1
+
+        td_current: TDet = self.X[-1] # current
+        # might not need to add it (because it has detections: that is normally the case)
+        td_next = TDet(td_current.x, td_current.t+dt, 0, td_current.theta)
+        # ALSO ADD COLOR MODEL
+        td_next.color_hist = td_current.color_hist
+        td_next.hasHist = td_current.hasHist
+        
+        rect_a = 10
+        bb_x, bb_y = td_current.x[0]-rect_a//2, td_current.x[1]-rect_a//2
+        td_next.bb = (bb_x, bb_y, rect_a, rect_a)
+        # -----------
+
+        # 3. get optical flow data of last point in trajectory
+        flow_region = getRect(td_next, self.detectionSpace.flow_map)
+        flow_vec2 = (getMotionVec(flow_region)) ## !!! flow is defined up to subpixel accuraccy, float needed
+        print(flow_vec2)
+
+        # getDetMotionVector()
+        drawBoundingBox(self.detectionSpace.map, td_next.bb, [0,255,255])
+        drawBoundingBox(self.detectionSpace.flow_img, td_next.bb, [0,255,255])
+        
+        mag,ang = getVecMagAng(flow_vec2)
+        td_next.v = mag
+        print(mag)
+        if(mag >= 2.0):
+            # setting color
+            print("setting color (mag > 2)")
+            td_next.color = [0,0,int(255*(mag/5.0))] # test
+        if(not math.isclose(mag, 0.0)):
+            td_next.theta = ang
+        td_next.x = td_current.x + flow_vec2
+    
+        # # 4. add calculated estimate to list (trajectory)
+        self.X.append(td_next)
+    # ------------------------------
 
 
-    # method checks if trajectories is made from same points (some kind of equals)
+    # method checks if trajectories are made from same points (some kind of equals)
     def basedOnSameDetections(self, t2: Trajectory) -> bool:
         return self.D == t2.D # is this equals?
     

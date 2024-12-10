@@ -1,4 +1,5 @@
-from helper_func import coords2det2, readDetFile2, coords2map, readTrajectoryFile, getTrColor, getFrameAtI, colorHist2Det, getColorHist, showHists, updateDetColorHistFromFrame, readFlowFile, flow2img, getFlowAtI
+# from helper_func import coords2det2, readDetFile2, coords2map, readTrajectoryFile, getTrColor, getFrameAtI, colorHist2Det, getColorHist, showHists, updateDetColorHistFromFrame, readFlowFile, flow2img, getFlowAtI, getDetMotionVector, flowVec2Det, updateDetMotionVecFromFlowMap
+from helper_func import *
 from DetectionSpace import DetectionSpace
 from Trajectory import Trajectory
 from Detection import Detection
@@ -11,6 +12,8 @@ import pickle
 
 DATA_ROOT = "../data/"
 FRAMES_PATH = "frames/LaSOT_bird-2/color/"
+FLOWS_PATH = "flow_est/LaSOT_bird-2_1/"
+
 DRAW_DETS=False
 MAIN_DEB=True
 # MAIN_DEB=False
@@ -263,6 +266,29 @@ def visualizeSaved():
 
     #     t_global = t_global + 1
 
+
+def setFrameFlowAtI(dspace: DetectionSpace, i: int):
+    # set new frame
+    frame = getFrameAtI(i,DATA_ROOT+FRAMES_PATH)
+    dspace.lastFrame = frame.copy()
+    dspace.map = frame
+    
+    # set new flow
+    flow_from = getFlowAtI(i, DATA_ROOT+FLOWS_PATH)
+    dspace.flow_map = flow_from
+    flow_img = flow2img(flow_from)
+    dspace.last_flow_img = flow_img.copy()
+    dspace.flow_img = flow_img
+    
+    #  also set flow to this image
+    if(i >= 1):
+        flow_to = getFlowAtI(i-1, DATA_ROOT+FLOWS_PATH)
+        dspace.flow_to = flow_to
+    else: # there is no flow into first frame
+        h,w = dspace.hw
+        dspace.flow_map=np.zeros((h,w,2)).astype(np.uint8) # optical flow (outta this frame)
+
+
 # main:
 def main():
     # INIT:
@@ -494,13 +520,14 @@ def main_d():
     print("init dspace: ", dspace.D)
 
     # append detections
-    D13_init = D13[T_OFFSET-n:T_OFFSET] # initial detection slice (relative to t_global; use previous n detections)
-    # also compute color hists for them
-    colorHist2Det(D13, DATA_ROOT+FRAMES_PATH, T_OFFSET-n,T_OFFSET)
+    D13_init: list[Detection] = D13[T_OFFSET-n:T_OFFSET] # initial detection slice (relative to t_global; use previous n detections)
+    colorHist2Det(D13, DATA_ROOT+FRAMES_PATH, T_OFFSET-n,T_OFFSET) # also compute color hists for detections
+    flowVec2Det(D13, DATA_ROOT+FLOWS_PATH, T_OFFSET-n,T_OFFSET) # and also motion vectors (where they move in next frame)
     print(D13[T_OFFSET-n-5:T_OFFSET+5 ])
 
     for d in D13_init:
         dspace.D.append(d)
+        # also calculate detection's motion vectors
         print(d)
     # END INIT DSPACE
     
@@ -534,7 +561,8 @@ def main_d():
     tr_temp = getSelectedNvisualize(tr, v[0], dspace, True, True)
     
     # 3.3 keep only selected (only in init phase)
-    tr = [tr_temp[0]]
+    # tr = [tr_temp[0]]
+    tr = tr_temp
     print("tr: ",tr)
     # END INIT
     
@@ -563,9 +591,15 @@ def main_d():
 
             # 1. get detections in current frame
             latest_dets = D13[t_global]
-            # 1.1 ALSO CALCULATE DETECTIONS' COLOR HISTOGRAMS
+            # 1.1 ALSO CALCULATE DETECTIONS' COLOR HISTOGRAMS AND MOTION VECTORS
+            # print("latest dets: ")
             for d in latest_dets:
                 updateDetColorHistFromFrame(d, frame)
+                updateDetMotionVecFromFlowMap(d, flow)
+                # print(d, end=" ", flush=True)
+            # print()
+                
+                
             # -----------------------------------
             dspace.D.append(latest_dets)
 
@@ -573,17 +607,21 @@ def main_d():
             dspace.clearSpace()
             for t in tr:
                 # check if possibly occluded; do e1Nc
-                if(t.possibly_occluded):
-                    possible_tr = t.e1Nc(n_empty=1)
-                    print(possible_tr)
-                    for tt in possible_tr:
-                        t.possible_next.append(tt)
-                        tt.getScore(E1,E2)
-                    # also extend possible next - [TODO]
-                    # t.getScore(E1,E2) # calculate score of existing trajectories (extended/extrapolated)
-                else:
-                    t.extend(n_empty=1)
-                    t.getScore(E1,E2) # calculate score of existing trajectories (extended/extrapolated)
+                # if(t.possibly_occluded):
+                #     possible_tr = t.e1Nc(n_empty=1)
+                #     print(possible_tr)
+                #     for tt in possible_tr:
+                #         t.possible_next.append(tt)
+                #         tt.getScore(E1,E2)
+                #     # also extend possible next - [TODO]
+                #     # t.getScore(E1,E2) # calculate score of existing trajectories (extended/extrapolated)
+                # else:
+                #     t.extend(n_empty=1)
+                #     t.getScore(E1,E2) # calculate score of existing trajectories (extended/extrapolated)
+                # t.extend(n_empty=1)
+                # t.extendUsingFlow2(n_empty=1)
+                t.extend2(n_empty=1) # uses flow
+                t.getScore(E1,E2) # calculate score of existing trajectories (extended/extrapolated)
                     
             # 3. vizualization
             for t in tr:
@@ -595,13 +633,13 @@ def main_d():
             dspace.showSpace(draw_dets=DRAW_DETS)
 
             # 3. for every new detection, start new trajectory:
-            # for d in latest_dets:
-            #     tr_new_det = Trajectory(d, dspace)
-            #     tr_new_det.build()
-            #     tr_new_det.getScore(E1,E2) # calculate score of new trajectories
-            #     # check if redundant:
-            #     if(not checkIfRedundant(tr, tr_new_det, recalculate=False, debug=False)): # if it is not redundant, then add it, otherwise do not add
-            #         tr.append(tr_new_det)
+            for d in latest_dets:
+                tr_new_det = Trajectory(d, dspace)
+                tr_new_det.build()
+                tr_new_det.getScore(E1,E2) # calculate score of new trajectories
+                # check if redundant:
+                if(not checkIfRedundant(tr, tr_new_det, recalculate=False, debug=False)): # if it is not redundant, then add it, otherwise do not add
+                    tr.append(tr_new_det)
 
 
             # 4. trajectory pruning: if trajectory inactive*, remove it
@@ -613,16 +651,16 @@ def main_d():
                 if(SAVE_TRAJECTORIES):
                     tr_save.append((t_global,copy.deepcopy(tr)))
 
-                v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # no need to recalculate, because they are updated
+                v = selectBest(tr, dspace, debug=True, recalculate_scores=False) # no need to recalculate, because they are updated (t.getScore(E1, E2))
                 tr_temp = []
                 t_i = 0
                 for t in tr:
-                    if(v[0][t_i] == 1):
-                        print("-> ", end="", flush=True)
-                    print(t," holes_ref: ", t.holes_ref, " holes_total: ", t.holes, " nss: ", t.not_selected_strike)
+                    # if(v[0][t_i] == 1):
+                    #     print("-> ", end="", flush=True)
+                    # print(t," holes_ref: ", t.holes_ref, " holes_total: ", t.holes, " nss: ", t.not_selected_strike)
 
                     # pruning is actually happening here
-                    if(t.holes_ref < EXT_THR*2):
+                    if(t.holes_ref < EXT_THR):
                         if(t.holes_ref > PO_THR):
                             t.possibly_occluded = True # !! <------------------------ POSSIBLY OCCLUDED IS SET HERE
                         tr_temp.append(t)
@@ -636,10 +674,11 @@ def main_d():
                     t_i = t_i+1
 
                     # handle special (possible occluded)
-                    if(t.possibly_occluded):
-                        print("possibly occluded: ", t, ":")
-                        print("possible next: ",t.possible_next)
-                        getSelectedNvisualize(t.possible_next, np.ones(len(t.possible_next)), dspace, separately=True, debug=True)
+                    
+                    # if(t.possibly_occluded):
+                    #     print("possibly occluded: ", t, ":")
+                    #     print("possible next: ",t.possible_next)
+                    #     getSelectedNvisualize(t.possible_next, np.ones(len(t.possible_next)), dspace, separately=True, debug=True)
 
                 # tr = tr_temp
                 # keep only selected (only for testing purposes)

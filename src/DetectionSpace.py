@@ -18,6 +18,7 @@ EXIT_ZONE_OFFSET = 5
 class DetectionSpace:
     def __init__(self, h,w, D: list = None, time_offset = 0):
         self.s1, self.s2 = S1, S2 # so uncivilized, but necessary
+        self.FLOW_PATH = "" # init flow path (WARN: not using DATA_ROOT variable; should provide full path) (used by connect points in Trajectory class (through dspace object pointer))
 
         # self.map = np.zeros((n,n)).astype(np.float32) # init empty map (old way)
         self.lastFrame = np.zeros((h,w,3)).astype(np.uint8) # last frame (contains no drawings)

@@ -5,6 +5,7 @@ import random
 import pickle
 from matplotlib import pyplot as plt
 import math
+import traceback
 
 import sys
 sys.path.append('../RAFT/core') # raft stuff
@@ -189,6 +190,21 @@ def getFlowAtI(i, path):
     frame_i = f'{i:08}'
     return np.load(path+frame_i+".npy")
 
+# function returns flow into and outta current frame
+def getFlowToFromAtI(i, path):
+    flow_from = getFlowAtI(i, path)
+    flow_to = np.zeros(np.shape(flow_from)) # return empty if next part throws error
+    try:
+        flow_to = getFlowAtI(i-1, path)
+    except FileNotFoundError:
+        print("[WARN] File not found. Optical flow might not exist at i: ", i)
+    except Exception:
+        print("[WARN] Flow to frame at i: ",i," could not be determined due to unknown reason. More info:")
+        print(traceback.format_exc())
+    return flow_to, flow_from
+
+
+
 # function crops region defined by detection's bb and calculates motion vector for it
 def getDetMotionVector(d: Detection, flow_map):
     flow_region = getRect(d, flow_map)
@@ -212,7 +228,7 @@ def flowVec2Det(dets: list[list[Detection]], path: str, begin:int = 0, end: int 
             d.flow_vector=motion_vec
             d.has_flow_vector=True
         i = i+1
-
+    
 def updateDetMotionVecFromFlowMap(det: Detection, flow_map):
     flow_bb = getRect(det, flow_map)
     det.flow_vector = getMotionVec(flow_bb)

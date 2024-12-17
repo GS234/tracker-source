@@ -244,7 +244,7 @@ class Trajectory:
         return probs
     
     # POMEMBNO!!
-
+    # extend methods:
 
     # method is used to extend existing trajectory to time t+1 (effectively: one step of connect)
     # [TODO] - time? need current time (for reference); further testing needed!
@@ -308,7 +308,7 @@ class Trajectory:
             print("next: ", td_next)
             print(self.X)
     
-    # function collects next detections and extends (e1Nc - extend 1 and copy; returns list of new trajectories, that are extended by one detection)
+    # function collects next detections and extends (e1Nc - extend 1 and copy; returns list of new trajectories, that are extended by one detection) (does it solve occlusions?)
     # [TODO] - finish it
     def e1Nc(self, debug=False, n_empty=-1) -> list[Trajectory]:
         print("this is e1Nc")
@@ -426,6 +426,7 @@ class Trajectory:
         # # 4. add calculated estimate to list (trajectory)
         self.X.append(td_next)
 
+    # uses optical flow only (starting from initial detection)
     def extendUsingFlow2(self, n_empty=-1):
         # print("this is extend using flow 2")
         if(self.disable_grow):
@@ -468,6 +469,56 @@ class Trajectory:
     
         # # 4. add calculated estimate to list (trajectory)
         self.X.append(td_next)
+    
+    # method uses optical flow data to estimate next point in trajectory if there are no detections, else it uses extend as normally (collectWtihin + estimateNext2)
+    def extend3(self, debug=False, n_empty=-1):
+        if(self.disable_grow):
+            return
+        dt = 1
+    
+        td_current: TDet = self.X[-1] # current
+        td_pred: TDet = self.estimateNext(td_current, dt) # prediction
+
+        s_region_bias = 0 # do not use bias
+        next_dets, next_probs = self.detectionSpace.collectWithin(td_pred.t, td_pred, s_region_bias) # collect around prediction (get detections and their probabilities)
+
+        # draw it to space
+        drawX(self.detectionSpace.map, td_pred.x, [80,160,255])
+        s1, s2 = self.detectionSpace.s1,self.detectionSpace.s2
+        self.detectionSpace.drawDsearchRegionAroundDetection(td_pred.x, s1+td_pred.v+s_region_bias, s2+s_region_bias, td_pred.theta)
+        
+        add_estimate = True # if this is true, then estimate next value with method, else add detection with posiiton of last detection and velocity 0 (as if it did not move)
+        if(len(next_dets) == 0): # hole
+            self.holes_ref = self.holes_ref + 1 # simply add 1 (to relative)
+            self.holes = self.holes + 1
+            
+            # handle case for consecutive holes:
+            if(n_empty != -1):
+                add_estimate = False
+                pass
+            # else: pass
+        else: # has detections
+            # add detections (objects, not just coords) to trajectory detections set (for intersections with other trajectories)
+            self.D.update(next_dets)
+            self.holes_ref = 0 # reset holes_ref (logic in if block needs this)
+        
+        # might not need to add it (because)
+        td_next = self.estimateNextUsingFlow(td_current)
+        # -----------
+
+        # d_t1 = TDet(x_t1,t_i1,v_t1,theta_t1) # next detection, it should probably be something else
+        if(add_estimate):
+            # # 3. estimate next detection: weighted mean of detections
+            td_next, _ = self.detectionSpace.estimateNext2(td_current, td_pred, next_dets, next_probs, dt=dt)
+        else:
+            print("[extend3] using flow estimated next")
+    
+        # # 4. add calculated estimate to list (trajectory)
+        self.X.append(td_next)
+        
+        
+        pass
+    
     # ------------------------------
 
 

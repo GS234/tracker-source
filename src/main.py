@@ -15,7 +15,7 @@ FRAMES_PATH = "frames/LaSOT_bird-2/color/"
 FLOWS_PATH = "flow_est/LaSOT_bird-2_1/"
 
 DRAW_DETS=False
-MAIN_DEB=True
+MAIN_DEB= True
 # MAIN_DEB=False
 EXT_THR=20 # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory (number of relative holes, essentially))
 PO_THR=7 # possibly occluded threshold: number of holes before trajectory is marked as possibly occluded
@@ -476,25 +476,40 @@ def main():
 def main_d():
     print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
 
-    # INIT:
-    # get through first n frames and initiate (hopefully) strong trajectories
-
+    # INIT - get through first n frames and initiate (hopefully) strong trajectories:
     # init variables used in process
+    
+    # SEQUENCES: uncomment for different sequences: ------------------------
+    
+    # sample of penguins file:
     # FRAMES_PATH = "sample/"
     # FLOW_FILE = "sample/sample_flo_2.p"
-    # D13 = readDetFile2(DATA_ROOT+"sample/dets.txt") # SAMPLE -> also have optical flow estimation
+    # DETS_FILE = "sample/dets.txt"
+    # T_OFFSET = 0 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
+    # n = 0 # number of previous frames for trajectory init
+    
+    # penguins:
     FRAMES_PATH = "frames/LaSOT_bird-2/color/"
     FLOWS_PATH = "flow_est/LaSOT_bird-2_1/"
-    D13 = readDetFile2(DATA_ROOT+"detections/LaSOT_bird-2.txt") # read detections from file
-    # print(D13[0:20])
-    # T_OFFSET = 20 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
-    # T_OFFSET = 1 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
-    # n = 1 # number of previous frames for trajectory init
+    DETS_FILE = "detections/LaSOT_bird-2.txt"
     T_OFFSET = 500 + 653 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
+    n = 20
+
+    # testing squares:
+    # FRAMES_PATH = "testing/sequence/"
+    # FLOWS_PATH = "testing/flows/"
+    # DETS_FILE = "testing/sequence/dets.txt"
+    # T_OFFSET = 0 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
+    # n = 0 # number of previous frames for trajectory init
+
+    # ----------------------------------------------------------------------
+
+    
+    D13 = readDetFile2(DATA_ROOT+DETS_FILE) # read detections from file
     t_global = T_OFFSET # current time (frame)
-    n = 19 # number of previous frames for trajectory init
+    
     # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
-    n_res = len(D13) - n # [TODO: handle properly (new t_global mechanics)]
+    n_res = len(D13) - n
     tr: list[Trajectory] = []
     n_solve = 5 # 20 # 'time window' - # of frames between trajectory selections
     # ------------------------------
@@ -530,7 +545,50 @@ def main_d():
         # also calculate detection's motion vectors
         print(d)
     # END INIT DSPACE
-    
+
+    # debug
+    # show frame, flow + dets on it
+    # for i in range(n_res):
+    # while(True):
+    #     # 0. set new frame
+    #     frame = getFrameAtI(t_global,DATA_ROOT+FRAMES_PATH)
+    #     dspace.lastFrame = frame.copy()
+    #     dspace.map = frame
+    #     # 0.1 set new flow image
+    #     # flow = getFlowAtI(t_global, DATA_ROOT+FLOWS_PATH)
+    #     flow_to, flow_from = getFlowToFromAtI(t_global, DATA_ROOT+FLOWS_PATH)
+    #     dspace.flow_map = flow_from
+    #     flow_img = flow2img(flow_from)
+    #     dspace.last_flow_img = flow_img.copy()
+    #     dspace.flow_img = flow_img
+
+    #     # show previous flow:
+
+            
+
+    #     # 1. get detections in current frame
+    #     prev_dets = []
+    #     if(t_global > 0):
+    #         prev_dets = D13[t_global-1]
+    #     latest_dets = D13[t_global]
+    #     dspace.D.append(latest_dets)
+    #     # 1.1 ALSO CALCULATE DETECTIONS' COLOR HISTOGRAMS AND MOTION VECTORS
+    #     # print("latest dets: ")
+    #     for d in latest_dets:
+    #         # updateDetColorHistFromFrame(d, frame)
+    #         updateDetMotionVecFromFlowMap(d, flow)
+    #     # draw previous dets to flow map
+    #     flow_img_to = flow2img(flow_to)
+    #     for d in prev_dets:
+    #         drawBoundingBox(flow_img_to, d.bb)
+    #         drawX(flow_img_to, d.x)
+    #         motion_vec = getDetMotionVector(d, flow_to)
+    #         drawLine(flow_img_to, d.x, (d.x + 10*motion_vec), [0,255,255])
+    #     cv.imshow("flow_to",flow_img_to)
+    #     dspace.showSpace(draw_dets=DRAW_DETS)
+    #     t_global = t_global+1
+    #     t_global = t_global%n_res
+
     
     # build trajectories from all detectinos
     # 1. get list of all detections
@@ -620,7 +678,8 @@ def main_d():
                 #     t.getScore(E1,E2) # calculate score of existing trajectories (extended/extrapolated)
                 # t.extend(n_empty=1)
                 # t.extendUsingFlow2(n_empty=1)
-                t.extend2(n_empty=1) # uses flow
+                # t.extend2(n_empty=1) # uses flow
+                t.extend3(n_empty=1) # uses flow
                 t.getScore(E1,E2) # calculate score of existing trajectories (extended/extrapolated)
                     
             # 3. vizualization

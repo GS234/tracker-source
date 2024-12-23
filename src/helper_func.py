@@ -36,6 +36,8 @@ def detections2map(D, map, color: list = [255,255,255]): # draws detections
         # x, y = d.x
         y, x = d.x # dimensions are switched! (because of row major order; it is messy [POSSIBLE TODO: think about it])
         # out of bounds is possible, this is the easiest quick fix, should probably be made different
+        y = int(y)
+        x = int(x)
         x = x%h
         y = y%w
         
@@ -174,6 +176,7 @@ def getVecMagAng(vec):
 # function takes region of optical flow map and calculates displacement vector (median of all pixels within bb)
 def getMotionVec(flo_region, mean=False):
     flo_reg_resh = flo_region.reshape((-1,2))
+    # print(flo_reg_resh)
     # print(flo_reg_resh)
     vec=[0,0]
     if(mean):
@@ -423,6 +426,37 @@ def drawBoundingBox(image, bb: tuple, color: list = [0,255,0]) -> None:
         points.append((x, y+i+1))
         points.append((x+w, y+i))
     coords2map(points, image, color=color, overwrite=True)
+
+# gets intersection bounds of bounding boxes
+def getBBIntersectionBounds(d1: Detection, d2: Detection):
+    tl_a = np.array(d1.bb[0:2])
+    tl_b = np.array(d2.bb[0:2])
+
+    br_a = tl_a + np.array(d1.bb[2:])
+    br_b = tl_b + np.array(d2.bb[2:])
+
+    xA = max(tl_a[0], tl_b[0])
+    yA = max(tl_a[1], tl_b[1])
+    xB = min(br_a[0], br_b[0])
+    yB = min(br_a[1], br_b[1])
+    
+    I_x = xB - xA
+    I_y = yB - yA
+    return (I_x, I_y)
+
+# calculates iou
+def IoU(d1:Detection, d2: Detection):
+    # determine the (x, y)-coordinates of the intersection rectangle
+    I_x, I_y = getBBIntersectionBounds(d1,d2)    
+    
+    # compute the area of intersection rectangle
+    iou = 0.0
+    if((I_x > 0) and (I_y > 0)):
+        I = I_x*I_y
+        U = np.prod(d1.bb[2:]) + np.prod(d2.bb[2:]) - I
+        iou =  I/U
+
+    return iou  
 
 tr_colors=[
     (158,98,64),

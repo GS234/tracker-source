@@ -1,6 +1,6 @@
 from __future__ import annotations # da delajo tut type hint-i znotraj istega class-a
 import numpy as np
-from Detection import Detection, TDet
+from Detection import Detection, TDet, TDet_from_Detection
 import math
 import copy
 from helper_func import detSet2map, getTrColor, showHists, compareHists, drawX, drawLine, drawBoundingBox, getVecMagAng, getMotionVec, getRect, getRectBb # helper functions
@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from DetectionSpace import DetectionSpace
 
 FLOW_WINDOW_SIZE = 10
+EST_SCORE = 0.001 # score of estimated det (if there is no detection)
 
 class Trajectory:
     # assumptions:
@@ -38,8 +39,11 @@ class Trajectory:
         self.origin.color_hist = d0.color_hist
         # ---
 
-        self.D = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
-        self.X = [ ] # trajectory points ("trajectory" detections)
+        self.D: set[Detection] = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
+        
+        self.D2: dict[Detection, float] = {}
+        self.X: TDet = [ ] # trajectory points ("trajectory" detections)
+        self.scores: list[float] = [] # scores of detections (relative to estimate; H_t -> score of trajectory point)
         
         self.S = 0 # score/support of the trajectory - getScore
         self.holes = 0 # counter: how many trajectory points have been added considering only estimate of next detection
@@ -53,7 +57,79 @@ class Trajectory:
         self.possible_next: list[Trajectory] = [] # this is list of trajectories that are possible after this one got occluded
 
         # -----------------
+    
+    # draw it:
+    # method draws trajectory to detection space
+    def drawToSpace(self, color=None):
+        if(color is None):
+            color = self.color
+        x_brightness = 1.0
+        if(len(self.X) > 0): # if has one
+            drawX(self.detectionSpace.map, self.X[0].x, x_brightness)
+        if(len(self.X) > 1): # if has many
+            for i in range(len(self.X)-1):
+                xi = self.X[i].x
+                di1 = self.X[i+1] # next detection
+                if(di1.color is not None):
+                    color=di1.color
+                else:
+                    color = self.color
+                xi1 = di1.x
+                drawLine(self.detectionSpace.map, xi,xi1,color)
+                # self.detectionSpace.drawDsearchRegionAroundDetection(xi1)
+            drawX(self.detectionSpace.map, self.X[-1].x, x_brightness)
+    
+    # method returns copy of this trajectory
+    def getCopy(self, deep=True) -> Trajectory:
+        t_ret = Trajectory(self.origin, self.detectionSpace)
+        
+        # things to not deepcopy
+        t_ret.S = self.S
+        t_ret.holes = self.holes
+        t_ret.holes_ref = self.holes_ref
+        t_ret.not_selected_strike = self.not_selected_strike
+        
+        # things to deepcopy (do we really need to deepcopy this?)
 
+        if(deep):
+            t_ret.D = copy.deepcopy(self.D)
+            t_ret.D2 = copy.deepcopy(self.D2)
+            t_ret.X = copy.deepcopy(self.X)
+        else:
+            t_ret.D = copy.copy(self.D)
+            t_ret.D2 = copy.copy(self.D2)
+            t_ret.X = copy.copy(self.X)
+        
+
+        return t_ret
+
+    # method estimates next position using optical flow (is better to have separate method, maybe could also make wrapper)
+    def estimateNextUsingFlow(self, td_current: TDet, dt: int = 1) -> TDet:
+        x = td_current.x
+        t = td_current.t
+        
+        # get displacement vector:
+        # rect_a = FLOW_WINDOW_SIZE # 10*10 neighbourhood
+        # bb_x, bb_y = td_current.x[0]-rect_a//2, td_current.x[1]-rect_a//2
+        # bb = (bb_x, bb_y, rect_a, rect_a)
+        bb = td_current.bb
+        flow_region = getRectBb(bb, self.detectionSpace.flow_map)
+        flow_vec2 = (getMotionVec(flow_region))
+        disp_vec = flow_vec2*dt
+        # drawBoundingBox(self.detectionSpace.map, bb, [0,255,255])
+
+        # construct next detection
+        next_v,next_theta = getVecMagAng(flow_vec2)
+        x_next = x+disp_vec
+
+        nextTDet = TDet(x_next, t+dt, next_v,next_theta)
+        nextTDet.color_hist = td_current.color_hist # assume current appearance
+        nextTDet.hasHist = td_current.hasHist
+        next_bb = td_current.bb.copy() # current is best estimate for next
+        next_bb[0:2] = next_bb[0:2]+disp_vec
+        nextTDet.bb = next_bb
+        return nextTDet
+    
     # method estimates next position based on current position, velocity and orientation (theta)
     def estimateNext(self, td_current: TDet, dt: int = 1) -> TDet:
         x = td_current.x
@@ -62,29 +138,6 @@ class Trajectory:
         y_t1 = x[1] + int(dt*td_current.v*math.sin(td_current.theta))
 
         nextTDet = TDet((x_t1, y_t1), t+dt, td_current.v, td_current.theta)
-        nextTDet.color_hist = td_current.color_hist # assume current appearance
-        nextTDet.hasHist = td_current.hasHist
-        return nextTDet
-    
-    # method estimates next position using optical flow (is better to have separate method, maybe could also make wrapper)
-    # [TODO] test it if works correctly
-    def estimateNextUsingFlow(self, td_current: TDet, dt: int = 1) -> TDet:
-        x = td_current.x
-        t = td_current.t
-        
-        # get displacement vector:
-        rect_a = FLOW_WINDOW_SIZE # 10*10 neighbourhood
-        bb_x, bb_y = td_current.x[0]-rect_a//2, td_current.x[1]-rect_a//2
-        bb = (bb_x, bb_y, rect_a, rect_a)
-        flow_region = getRectBb(bb, self.detectionSpace.flow_map)
-        flow_vec2 = (getMotionVec(flow_region))
-        drawBoundingBox(self.detectionSpace.map, bb, [0,255,255])
-
-        # construct next detection
-        next_v,next_theta = getVecMagAng(flow_vec2)
-        x_next = x+flow_vec2*dt
-
-        nextTDet = TDet(x_next, t+dt, next_v,next_theta)
         nextTDet.color_hist = td_current.color_hist # assume current appearance
         nextTDet.hasHist = td_current.hasHist
         return nextTDet
@@ -164,27 +217,6 @@ class Trajectory:
             self.X.append(t_next[i])
         # print(self.X)
         
-
-    # method draws trajectory to detection space
-    def drawToSpace(self, color=None):
-        if(color is None):
-            color = self.color
-        x_brightness = 1.0
-        if(len(self.X) > 0): # if has one
-            drawX(self.detectionSpace.map, self.X[0].x, x_brightness)
-        if(len(self.X) > 1): # if has many
-            for i in range(len(self.X)-1):
-                xi = self.X[i].x
-                di1 = self.X[i+1] # next detection
-                if(di1.color is not None):
-                    color=di1.color
-                else:
-                    color = self.color
-                xi1 = di1.x
-                drawLine(self.detectionSpace.map, xi,xi1,color)
-                # self.detectionSpace.drawDsearchRegionAroundDetection(xi1)
-            drawX(self.detectionSpace.map, self.X[-1].x, x_brightness)
-    
     # POMEMBNO!! MOGOCE DELA NAROBE (klicemo iz build qbp matrix)
     # method calculates CUMULATIVE "error" of ALL detections around estimated trajectory point in time t (is this ok?)
     # [TODO] - is this ok? might not be
@@ -453,8 +485,13 @@ class Trajectory:
         print(flow_vec2)
 
         # getDetMotionVector()
-        drawBoundingBox(self.detectionSpace.map, td_next.bb, [0,255,255])
-        drawBoundingBox(self.detectionSpace.flow_img, td_next.bb, [0,255,255])
+        bb_color = [0,255,255]
+        if(self.id in {137,142,143}):
+            bb_color = [100,255,255]
+        if(self.id in {138,144}):
+            bb_color = [100, 255, 100]
+        drawBoundingBox(self.detectionSpace.map, td_next.bb, bb_color)
+        drawBoundingBox(self.detectionSpace.flow_img, td_next.bb, bb_color)
         
         mag,ang = getVecMagAng(flow_vec2)
         td_next.v = mag
@@ -519,9 +556,6 @@ class Trajectory:
         
         pass
     
-    # ------------------------------
-
-
     # method checks if trajectories are made from same points (some kind of equals)
     def basedOnSameDetections(self, t2: Trajectory) -> bool:
         return self.D == t2.D # is this equals?
@@ -634,22 +668,113 @@ class Trajectory:
         q_ij = S_err * (-0.5)
         return q_ij
     
-    # method returns copy of this trajectory
-    def getCopy(self) -> Trajectory:
-        t_ret = Trajectory(self.origin, self.detectionSpace)
-        
-        # things to not deepcopy
-        t_ret.S = self.S
-        t_ret.holes = self.holes
-        t_ret.holes_ref = self.holes_ref
-        t_ret.not_selected_strike = self.not_selected_strike
-        
-        # things to deepcopy
-        t_ret.D = copy.deepcopy(self.D)
-        t_ret.X = copy.deepcopy(self.X)
 
-        return t_ret
+
+    # new methods:
+
+    # new main extend method
+    def extend4(self, prob_threshold=0, debug=False) -> tuple[set[Detection],list[Trajectory]]:
+        td_current: TDet = self.X[-1] # current tdet (last trajectory point)
+        # print("current of t"+str(self.id)+": ",td_current, self.X)
+        td_next: TDet = self.estimateNextUsingFlow(td_current)
         
+        # collectWithin2:
+        next_dets, next_probs = self.detectionSpace.collectWithin2(td_next.t, td_next)
+
+        bb_color = [0,255,255]
+        # print("self.id: ",self.id)
+        # if(self.id in {137,142,143}):
+        #     bb_color = [0,0,255]
+        # if(self.id in {138,144}):
+        #     bb_color = [255, 0, 0]
+        drawBoundingBox(self.detectionSpace.map, td_next.bb, bb_color)
+        
+
+        # print("dets, probs of t"+str(self.id)+": ",next_dets, next_probs)
+
+        n_dets = len(next_dets)
+        used_dets: set[Detection] = set()
+        next_tr: list[Trajectory] = list()
+                
+        if(n_dets > 0): # we have detections: first: continue this one, every else: copy&add
+            for i in range(n_dets):
+                d_i = next_dets[i]
+                d_i_prob = next_probs[i] # also add score to trajectory [TODO]
+
+                # if(d_i_prob >= prob_threshold): # maybe later
+                next_tdet = TDet_from_Detection(d_i) # has no v, theta, important is, that it has bounding box; should probably also compare color model, but when we have one
+                used_dets.add(d_i)
+                
+                if(i == 0): # first one continue this one, every else copy&add
+                    self.X.append(next_tdet)
+                    self.D.add(d_i)
+                    self.D2[d_i]=d_i_prob
+                    
+                else:
+                    next_t = self.getCopy(deep=False)
+                    print("[!] FORKING t"+str(self.id)+" INTO t", str(next_t.id), "(iou: ",d_i_prob," )")
+                    next_t.X.append(next_tdet)
+                    next_t.scores.append(d_i_prob)
+                    next_t.D2[d_i]=d_i_prob
+                    next_tr.append(next_t)
+
+        else:
+            self.X.append(td_next) # continue current, with estimate
+            self.D2[td_next]=EST_SCORE # as detection add estimate
+        return (used_dets, next_tr)
+    
+    # new build method (for now only append origin)
+    def build2(self):
+        self.X.append(self.origin)
+        self.D2[self.origin] = 1.0
+    
+    # methods used to build QPB matrix
+
+    # simply sum of all scores
+    def getScore2(self):
+        return sum(self.D2.values())
+    
+    # method returns interaction cost of two trajectories
+    def getInteractionCost2(self, other_t: Trajectory):
+        P1 = 0.05 # tie-breaker parameter
+        # 1. get points in intersection
+        det_intersect = self.D2.keys() & other_t.D2.keys()
+
+        # choose weaker hypothesis
+        tr_l = other_t # assume weaker is the other
+        if(other_t.getScore2() > self.getScore2()):
+            tr_l = self # change if necessary
+        
+        # 2. calculate g of intersecting points (with D of the weaker hypothesis)
+        q_ij = 0
+        # if there is only one point in intersection, then trajectories have merged - keep one that has bigger score
+        if(len(det_intersect) == 1):
+            # print("JOIN FORK ----->")
+            det = det_intersect.pop()
+            score_of_this = self.D2[det]
+            score_of_other = other_t.D2[det]
+
+            print("[!] JOIN FORK: score of this (t"+str(self.id)+"): ",score_of_this, "score of other (t"+str(other_t.id)+"):", score_of_other)
+            
+            q_ij = other_t.getScore2() * -(0.5+P1)
+            # q_ij = -200
+            if(score_of_other > score_of_this):
+                q_ij = self.getScore2() * -(0.5+P1)
+                # q_ij = -100.0
+            # print("<---------")
+        # if there are many, then it is probably fork or previous
+        else:
+            S_err = 0
+            for dets_i in det_intersect:
+                int_cost = tr_l.D2[dets_i]
+                S_err = S_err + int_cost
+
+            q_ij = S_err * -(0.5+P1)
+        return q_ij
+    # ------------------------------
+
+
+
         
 
     def __str__(self):

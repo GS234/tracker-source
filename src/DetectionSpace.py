@@ -33,13 +33,25 @@ class DetectionSpace:
         
         self.exit_zone = EXIT_ZONE_OFFSET # offset from edge
         self.hw = (h,w) # map size (dimensions)
-        self.window_name = "detection space"
         self.TR = [] # array for storing trajectories (unused)
         self.time_offset = time_offset # time offset constant: because self.D expects t0 at index 0 (t0 is not necessarily 0, so this constant is used to correct detection accesses)
         
         self.D: list[list[Detection]] = [] # detections (2d array, 1st dim. is time, subarrays contain detections)
         if D is not None:
             self.D.append(D) # append detections at time t = 0
+
+        # cv specific: larger window than only cv.imshow
+        self.dspace_winname = "detection space"
+        self.flow_winname = self.dspace_winname+" - optical flow"
+        cv.namedWindow(self.flow_winname, cv.WINDOW_NORMAL)
+        cv.namedWindow(self.dspace_winname, cv.WINDOW_NORMAL)
+
+        print(self.hw)
+        scale_f = 1.5
+        winsize = ((np.array(self.hw)+np.array([40,0]))*scale_f).astype(np.int32)
+        cv.resizeWindow(self.dspace_winname, winsize[1],winsize[0])
+        cv.resizeWindow(self.flow_winname, winsize[1],winsize[0])
+        # 
     
     
     # detection-specific methods (MIGHT NEED TO MOVE THEM ELSEWHERE [TODO: consider doing so!])
@@ -83,6 +95,14 @@ class DetectionSpace:
         # check if within (enacba elipse):
         xx,yy = int(v[0]), int(v[1]) #int (bolj clanky kot float)
         return ((xx*xx)/(a*a) + (yy*yy)/(b*b) <= 1)
+    
+    # method checks if bounding boxes overlap
+    def isWithinBB(self, d: Detection, d_ref: Detection):
+        I_x, I_y = getBBIntersectionBounds(d, d_ref)
+        # if I_x and I_y are positive, then they lay inside, if either of them or both are negative, then they do not overlap
+        if((I_x > 0) and (I_y > 0)):
+            return True
+        return False
 
     # !!! POMEMBNO:
     # method calculates probability (score) of detection 
@@ -93,6 +113,17 @@ class DetectionSpace:
             ret_val = ret_val*motion_model_prob
         if(use_color):
             color_model_prob = self.getColorModelProb(d,td)
+            ret_val = ret_val*color_model_prob
+        return ret_val
+    
+    # method calculates probability (score) of detection (iou + deep features)
+    def getProb3(self, d:Detection, td:TDet, use_iou=True, use_color=True) -> float:
+        ret_val = 1
+        if(use_iou):
+            iou_prob = IoU(d, td)
+            ret_val = ret_val*iou_prob
+        if(use_color):
+            color_model_prob = 1 # [TODO]
             ret_val = ret_val*color_model_prob
         return ret_val
         
@@ -165,9 +196,11 @@ class DetectionSpace:
                     
         # print(map)
         # print(self.map)
+        # scale_f = 1.5
+        # winsize = (np.array(self.hw) * scale_f).astype(np.int32)
         if(self.use_flow):
-            cv.imshow(self.window_name+" - optical flow", self.flow_img)
-        cv.imshow(self.window_name, self.map)
+            cv.imshow(self.flow_winname, self.flow_img)
+        cv.imshow(self.dspace_winname, self.map)
         cv.waitKey(0)
         # while cv.getWindowProperty(self.window_name, cv.WND_PROP_VISIBLE) >= 1:
         #     cv.waitKey(1)
@@ -207,6 +240,30 @@ class DetectionSpace:
         # for i in range(n_det):
         #     next_detections_X[i] = next_detections[i].x
         # return next_detections_X, next_detections_probs
+    
+    # like ^, but checks according to bounding box region
+    def collectWithin2(self, t:int, td: TDet, use_iou=True, use_color=False):
+        # search among detections in next time moment (next frame, that is (whichever, usually immediate successor (dt = 1)))
+        next_detections = [] # store 'em in list
+        next_detections_probs = [] # weights: sampled from distribution (bivariate normal dist, see Detection.getProb())
+        t = t - self.time_offset # to fix indexing of self.D
+
+        # print(self.D)
+        # print(t)
+
+        # drawBoundingBox(self.map, td.bb, [0,255,255]) # yellow rect is current (debug visualization)
+        if(t < len(self.D) and t >= 0): # check only if has detections in this layer (and not before 0)
+            for d_i in self.D[t]:
+                if(self.isWithinBB(d_i, td)): # 2x isti izracun, zal (na racun preglednosti)
+                    # drawBoundingBox(self.map, d_i.bb, [0,255,0]) # debug
+                    next_detections.append(d_i) # store detections, for now
+                    detection_prob = self.getProb3(d_i, td, use_iou=use_iou, use_color=use_color)
+                    next_detections_probs.append(detection_prob) # get probability score from nearby point
+                else:
+                    pass
+                    # drawBoundingBox(self.map, np.array(d_i.bb)+np.array([-1,-1,2,2]), [0,0,255]) # debug
+        
+        return next_detections, next_detections_probs
 
     # estimate next point in trajectory
     # input: last detection (for reference: estimate velocity, ...), predicted position, collected detections and their probabilities
@@ -508,7 +565,36 @@ class DetectionSpace:
                 Q[n,m] = q_ij
                 n = n+1
             m = m+1
+        return Q
+    
+    # method builds trajectory interatction matrix
+    def buildQBPMatrix3(self, tr_list: list[Trajectory]):
+        print("this is build QBP 3")
+        # 1. calculate q_ii terms ("merit terms")
+        Q_ii = [] # list of q_ii (trajectory scores, "merit terms")
+        for tr in tr_list:
+            q_ii = tr.getScore2()
+            Q_ii.append(q_ii)
+        
+        Q = np.diag(Q_ii) # make diagonal matrix
+        
+        # 2. calculate q_ij terms (interaction terms (similar to q_ii, but only consider intersecting trajectory points))
+        n_tr = len(Q_ii)
+        m = 0 # row index
+        n = 0 # column index
 
+        # I miss good old for loops from java so much ...
+        while( m <= (n_tr-1)):
+            n = m+1 # calculate only terms above diagonal, because Q is symmetric (Q[i,j] = Q[j,i])
+            while( n <= (n_tr -1)):
+                # 1. calculate interaction cost (points that are in intersection of both hypotheses)
+                q_ij = tr_list[m].getInteractionCost2(tr_list[n])
+
+                # 2. set q_ij term (q_ij, q_ji)
+                Q[m,n] = q_ij
+                Q[n,m] = q_ij
+                n = n+1
+            m = m+1
         return Q
     
 

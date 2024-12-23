@@ -3,8 +3,11 @@ import numpy as np
 
 # detection class; if becomes too complicated, move it to other file
 class Detection:
+    Did = 0 # private static int
     # constructor: position, timestamp
     def __init__(self, x, t=0, bb=None, color_hist=None, flow_vector=None):
+        self.id = Detection.Did
+        Detection.Did += 1
         self.x = np.array(x)
         self.bb = bb # bounding box [x, y, h, w]
         self.color_hist, self.hasHist = color_hist, True # color histogram: np.array (shape: n,n,n; n: number of bins) and flag to indicate that it has data
@@ -62,6 +65,15 @@ class TDet(Detection):
     
     def __str__(self):
         return "td{x="+str(self.x)+",t="+str(self.t)+"}"
+
+
+def TDet_from_Detection(d: Detection) -> TDet:
+    td = TDet(d.x, d.t)
+    
+    # copy everything
+    td.bb = d.bb
+    td.color_hist, td.hasHist, td.flow_vector, td.has_flow_vector, td.color = d.color_hist, d.hasHist, d.flow_vector, d.has_flow_vector, d.color
+    return td
 
 ### detection-specific functions: ###
 ### ----------------------------- ###

@@ -60,7 +60,7 @@ def computeFlow(args):
         flows.append(flows[-1]*0) # from last to next to last? I think not! (pad last)
         
         # save optical flow estimation and images to pickle:
-        with open('./flowEst.p', 'wb') as fp:
+        with open('./flowEst2.p', 'wb') as fp:
             pickle.dump(flows, fp)
         
 if __name__ == '__main__':

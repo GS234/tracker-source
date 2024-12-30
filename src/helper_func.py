@@ -323,12 +323,15 @@ def bbDet2Det(bb: tuple, t: int = 0):
 
 # function reads i-th frame
 def getFrameAtI(i: int, path: str, toBGR=False):
-    frame_i = f'{i:08}'
-    frame = cv.imread(path+str(frame_i)+".jpg")
+    frame = cv.imread(path+str(i2frameI(i))+".jpg")
     if(toBGR):
         return cv.cvtColor(frame, cv.COLOR_RGB2BGR)
     else:
         return frame
+
+# returns i to frame i format (i -> 0000000i)
+def i2frameI(i:int):
+    return f'{i:08}'
 
 def showHists(hists:list, c=1):
     color = ['b','g','r']

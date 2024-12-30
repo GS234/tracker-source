@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 FLOW_WINDOW_SIZE = 10
 EST_SCORE = 0.001 # score of estimated det (if there is no detection)
+DET_ADD_THR = 0.50 # threshold to add detection to trajectory
 
 class Trajectory:
     # assumptions:
@@ -55,6 +56,9 @@ class Trajectory:
 
         self.possibly_occluded = False # if this is true, trajectory should be extended by e1Nc instead of extend
         self.possible_next: list[Trajectory] = [] # this is list of trajectories that are possible after this one got occluded
+
+        # new things:
+        self.term = False
 
         # -----------------
     
@@ -674,6 +678,8 @@ class Trajectory:
 
     # new main extend method
     def extend4(self, prob_threshold=0, debug=False) -> tuple[set[Detection],list[Trajectory]]:
+        if(self.term):
+            return (set(),[self])
         td_current: TDet = self.X[-1] # current tdet (last trajectory point)
         # print("current of t"+str(self.id)+": ",td_current, self.X)
         td_next: TDet = self.estimateNextUsingFlow(td_current)
@@ -681,13 +687,16 @@ class Trajectory:
         # collectWithin2:
         next_dets, next_probs = self.detectionSpace.collectWithin2(td_next.t, td_next)
 
+        print("this is det probs: ", next_probs)
+
         bb_color = [0,255,255]
         # print("self.id: ",self.id)
         # if(self.id in {137,142,143}):
         #     bb_color = [0,0,255]
         # if(self.id in {138,144}):
         #     bb_color = [255, 0, 0]
-        drawBoundingBox(self.detectionSpace.map, td_next.bb, bb_color)
+        if(not self.term):
+            drawBoundingBox(self.detectionSpace.map, td_next.bb, bb_color)
         
 
         # print("dets, probs of t"+str(self.id)+": ",next_dets, next_probs)
@@ -697,26 +706,30 @@ class Trajectory:
         next_tr: list[Trajectory] = list()
                 
         if(n_dets > 0): # we have detections: first: continue this one, every else: copy&add
+            i2 = 0 # secondary i - to determine if add to current or copy&add (and also allow using threshold)
             for i in range(n_dets):
                 d_i = next_dets[i]
-                d_i_prob = next_probs[i] # also add score to trajectory [TODO]
+                d_i_prob = next_probs[i]
 
-                # if(d_i_prob >= prob_threshold): # maybe later
-                next_tdet = TDet_from_Detection(d_i) # has no v, theta, important is, that it has bounding box; should probably also compare color model, but when we have one
-                used_dets.add(d_i)
-                
-                if(i == 0): # first one continue this one, every else copy&add
-                    self.X.append(next_tdet)
-                    self.D.add(d_i)
-                    self.D2[d_i]=d_i_prob
+                if(d_i_prob >= DET_ADD_THR):
+                    # if(d_i_prob >= prob_threshold): # maybe later
+                    next_tdet = TDet_from_Detection(d_i) # has no v, theta, important is, that it has bounding box; should probably also compare color model, but when we have one
+                    used_dets.add(d_i)
                     
-                else:
-                    next_t = self.getCopy(deep=False)
-                    print("[!] FORKING t"+str(self.id)+" INTO t", str(next_t.id), "(iou: ",d_i_prob," )")
-                    next_t.X.append(next_tdet)
-                    next_t.scores.append(d_i_prob)
-                    next_t.D2[d_i]=d_i_prob
-                    next_tr.append(next_t)
+                    if(i2 == 0): # first one continue this one, every else copy&add
+                        self.X.append(next_tdet)
+                        self.D.add(d_i)
+                        self.D2[d_i]=d_i_prob # also add score to trajectory
+                        
+                    else:
+                        next_t = self.getCopy(deep=False)
+                        print("[!] FORKING t"+str(self.id)+" INTO t", str(next_t.id), "(iou: ",d_i_prob," )")
+                        next_t.X.append(next_tdet)
+                        next_t.scores.append(d_i_prob)
+                        next_t.D2[d_i]=d_i_prob # also add score to trajectory
+                        next_tr.append(next_t)
+                    
+                    i2 = i2+1 # increase if deteciton is appended
 
         else:
             self.X.append(td_next) # continue current, with estimate

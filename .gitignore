@@ -1,9 +1,11 @@
 images
 src/__pycache__
 RAFT
+dinov2
 data
 src/other/estimates
 src/debug_data
 src/hypotheses.*
 src/other_mains.py
 src/backup
+src/other/features.png

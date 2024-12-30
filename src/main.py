@@ -16,7 +16,7 @@ FRAMES_PATH = "frames/LaSOT_bird-2/color/"
 FLOWS_PATH = "flow_est/LaSOT_bird-2_1/"
 
 DRAW_DETS=False
-MAIN_DEB= True
+MAIN_DEB= not not True
 # MAIN_DEB=False
 EXT_THR=20 # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory (number of relative holes, essentially))
 PO_THR=7 # possibly occluded threshold: number of holes before trajectory is marked as possibly occluded
@@ -292,6 +292,35 @@ def setFrameFlowAtI(dspace: DetectionSpace, i: int):
 
 # main:
 def main():
+    dspace = DetectionSpace(1,1)
+    Q=np.array([
+        [ 22.398, -11.782,  -0.,     -0.,     -0.,     -0.,     -0.   ],
+        [-11.782,  21.421,  -0.,     -0.,     -0.,     -0.,     -0.   ],
+        [ -0.,     -0.,      6.417,  -0.   ,  -0.   ,  -0.   ,  -0.   ],
+        [ -0.,     -0.,     -0.   ,   4.589,  -0.   ,  -0.   ,  -0.   ],
+        [ -0.,     -0.,     -0.   ,  -0.   ,  11.098,  -5.599,  -0.   ],
+        [ -0.,     -0.,     -0.   ,  -0.   ,  -5.599,  10.18 ,  -0.   ],
+        [ -0.,     -0.,     -0.   ,  -0.   ,  -0.   ,  -0.   ,   1.   ]])
+    
+    Q=np.array([
+        [ 6.417,  -0.   ,  -0.   ,  -0.   ,  -0.   ],
+        [-0.   ,   4.589,  -0.   ,  -0.   ,  -0.   ],
+        [-0.   ,  -0.   ,  11.098,  -5.599,  -0.   ],
+        [-0.   ,  -0.   ,  -5.599,  10.18 ,  -0.   ],
+        [-0.   ,  -0.   ,  -0.   ,  -0.   ,   1.   ]])
+    Q=np.array([
+        [ 6,  -0.   ,  -0.   ,  -0.    ],
+        [-0.   ,   4,  -0.   ,  -0.    ],
+        [-0.   ,  -0.   ,  11,  -6 ],
+        [-0.   ,  -0.   ,  -6,  10  ]])
+    Q=np.array([
+        [ 11,  -6.   ,  -0.   ,  -0.    ],
+        [-6.   ,   10,  -0.   ,  -0.    ],
+        [-0.   ,  -0.   ,  6,  -0 ],
+        [-0.   ,  -0.   ,  -0,  4  ]])
+    print(Q)
+    print(dspace.solveQBP(Q))
+    print(dspace.solveQBP2(Q, debug=True))
     pass
 
 # debug main:
@@ -374,6 +403,7 @@ def main_d():
 
     # EXTEND
     skip_n = 35
+    skip_n = 0
     for i in range(n_res):
         print("______________")
         print("[at time "+str(t_global)+"]")
@@ -393,11 +423,13 @@ def main_d():
         for t in tr:
             tr_next_from_same: list[Trajectory] = []
             tr_next_from_same.append(t) # append this
-            t_prev = t.getCopy(deep=False) # also include current trajectory, add it to hypothesis selection
-            tr_next_from_same.append(t_prev) # append copy of this (for merging forks)
-            used_dets_current, new_tr = t.extend4() # get set of used detections (for starting new trajectories from others), list of new trajectories (add 'em to tr)
-            tr_next_from_same = tr_next_from_same + new_tr
-            used_dets.update(used_dets_current)
+            if(not t.term): # if not terminated
+                t_prev = t.getCopy(deep=False) # also include current trajectory, add it to hypothesis selection
+                t_prev.term = True # previous is terminated
+                tr_next_from_same.append(t_prev) # append copy of this (for merging forks)
+                used_dets_current, new_tr = t.extend4() # get set of used detections (for starting new trajectories from others), list of new trajectories (add 'em to tr)
+                tr_next_from_same = tr_next_from_same + new_tr
+                used_dets.update(used_dets_current)
 
             first = True
             for tt in tr_next_from_same:
@@ -429,6 +461,8 @@ def main_d():
 
         # hypothesis selection (build qbp, )
         print("building Q")
+        tr.sort(key=lambda x: x.getScore2(), reverse=True) #
+        print("tr sorted: ", tr)
         Q = dspace.buildQBPMatrix3(tr)
         print(Q)
         v = dspace.solveQBP2(Q)

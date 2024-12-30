@@ -26,7 +26,7 @@ from utils.utils import InputPadder
 DATA_ROOT = '../../data/'
 ESTIMATES_ROOT = 'estimates/'
 DEVICE = 'cuda'
-CALCULATE_FLOW = False
+CALCULATE_FLOW = True
 
 # ESTIMATES_FILE = 'estimates.p'
 # kvadrati

@@ -251,9 +251,53 @@ def roiPool(mat: np.ndarray, r:int = 3, use_2d=False) -> np.ndarray:
             roi_pooled[i][j] = pooled_ij
     return np.array(roi_pooled)
 
+def cosineSim(v1,v2):
+    v1 = np.array(v1).astype(np.float32)
+    v2 = np.array(v2).astype(np.float32)
+    v1_norm = np.linalg.norm(v1)
+    v2_norm = np.linalg.norm(v2)
+    v1dotv2 = np.dot(v1,v2)
+    score = v1dotv2/(v1_norm*v2_norm)
+    # print("v1, v1 norm, v2, v2 norm, v1 dot v2, cosSim:", v1, v2, v1_norm, v2_norm, v1dotv2, score)
+    return score
+
+
+def matSimScore(m1, m2):
+    # assume matrices are of same shape (3x3, (roiPooled features))
+    print("m1,m2:",m1, m2)
+    hw_ = np.shape(m1)
+    h, w = hw_[0:2]
+    score_mat = np.zeros((h,w))
+    for i in range(h):
+        for j in range(w):
+            # compute cosine similarity
+            v1 = m1[i,j]
+            v2 = m2[i,j]
+            cos_sim_score = cosineSim(v1,v2)
+            score_mat[i,j] = cos_sim_score
+            
+    
+    # if cosine similarity: set neg values to 0
+    print("score mat:",score_mat)
+    score_mat[np.where(score_mat < 0)] = 0
+    return np.mean(score_mat)
+
 
 # function contains code with functionality that of final implementation of getting visual features of roi-s from frames
 def main2():
+    a = np.array([125,136,182])
+    b = np.array([125,136,182])
+    print(cosineSim(a,b))
+    
+    a = np.array([1,0])
+    b = np.array([3,0])
+    print(cosineSim(a,b))
+    
+    # # a = np.array([1,0])
+    # # b = np.array([0,2])
+    # # print(cosineSim(a,b))
+    
+    # return
     # init model:
     dinov2 = DinoFeatures()
     
@@ -329,14 +373,16 @@ def main2():
 
 
 
-    patches1 = patchesInBB(pca_features_rgb, bb1, xy_off=[pad_l, pad_u])
+    # patches1 = patchesInBB(pca_features_rgb, bb1, xy_off=[pad_l, pad_u])
+    patches1 = patchesInBB(features1[pca_features_fg], bb1, xy_off=[pad_l, pad_u])
     print(patches1)
-    showInNamed("p1 - patches:", patches1[..., ::-1])
+    # showInNamed("p1 - patches:", patches1[..., ::-1])
 
     # 5. RoiPooled patches:
     patches_rp1 = roiPool(patches1)
     print(patches_rp1)
-    showInNamed("p1 - pooled (3x3):", patches_rp1[..., ::-1])
+    # showInNamed("p1 - pooled (3x3):", patches_rp1[..., ::-1])
+    print(matSimScore(patches_rp1, patches_rp1))
 
 
 

@@ -361,6 +361,7 @@ def main_d():
     # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
     n_res = len(D13) - n - T_OFFSET
     tr: list[Trajectory] = []
+    tr_fin: list[Trajectory] = []
     n_solve = 1 # 5 # 20 # 'time window' - # of frames between trajectory selections
     # ------------------------------
     
@@ -422,14 +423,18 @@ def main_d():
         print("[EXTENDING TRAJECTORIES]")
         for t in tr:
             tr_next_from_same: list[Trajectory] = []
-            tr_next_from_same.append(t) # append this
-            if(not t.term): # if not terminated
+            # [TODO] - finish
+            if(not t.term): # if not terminated, extend it
+                tr_next_from_same.append(t) # append current if not terminated
                 t_prev = t.getCopy(deep=False) # also include current trajectory, add it to hypothesis selection
                 t_prev.term = True # previous is terminated
                 tr_next_from_same.append(t_prev) # append copy of this (for merging forks)
-                used_dets_current, new_tr = t.extend4() # get set of used detections (for starting new trajectories from others), list of new trajectories (add 'em to tr)
-                tr_next_from_same = tr_next_from_same + new_tr
+                used_dets_current, forked_tr = t.extend4() # get set of used detections and forks (for starting new trajectories from others), list of new trajectories (forks) (add 'em to tr)
+                tr_next_from_same = tr_next_from_same + forked_tr
                 used_dets.update(used_dets_current)
+            else: # if terminated, do not include it in hypothesis selection, but separately
+                tr_fin.append(t)
+
 
             first = True
             for tt in tr_next_from_same:

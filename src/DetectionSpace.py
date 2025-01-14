@@ -159,17 +159,19 @@ class DetectionSpace:
 
     # ----------------------------------------------------------------------------------------
 
-    def showSpace(self, det_color=[0,0,0], draw_dets=True):
+    def showSpace(self, det_color=[0,0,0], draw_dets=True, dspace_winname=None):
         # draw exit zone (border)
-        off = self.exit_zone
-        exit_zone_color=[0,255,255]
-        ul,bl,ur,br = (off,off),(off,self.hw[0]-off),(self.hw[1]-off, off),(self.hw[1]-off, self.hw[0]-off)
-        ul,bl,ur,br = np.array(ul),np.array(bl),np.array(ur),np.array(br)
-        drawLine(self.map, ul,bl,color=exit_zone_color)
-        drawLine(self.map, ul,ur,color=exit_zone_color)
-        drawLine(self.map, ur,br,color=exit_zone_color)
-        drawLine(self.map, bl,br,color=exit_zone_color)
+        # off = self.exit_zone
+        # exit_zone_color=[0,255,255]
+        # ul,bl,ur,br = (off,off),(off,self.hw[0]-off),(self.hw[1]-off, off),(self.hw[1]-off, self.hw[0]-off)
+        # ul,bl,ur,br = np.array(ul),np.array(bl),np.array(ur),np.array(br)
+        # drawLine(self.map, ul,bl,color=exit_zone_color)
+        # drawLine(self.map, ul,ur,color=exit_zone_color)
+        # drawLine(self.map, ur,br,color=exit_zone_color)
+        # drawLine(self.map, bl,br,color=exit_zone_color)
 
+        if(dspace_winname is None):
+            dspace_winname = self.dspace_winname
         
         if(self.D):
             if(draw_dets):
@@ -200,7 +202,8 @@ class DetectionSpace:
         # winsize = (np.array(self.hw) * scale_f).astype(np.int32)
         if(self.use_flow):
             cv.imshow(self.flow_winname, self.flow_img)
-        cv.imshow(self.dspace_winname, self.map)
+        # cv.imshow(self.dspace_winname, self.map)
+        cv.imshow(dspace_winname, self.map)
         cv.waitKey(0)
         # while cv.getWindowProperty(self.window_name, cv.WND_PROP_VISIBLE) >= 1:
         #     cv.waitKey(1)
@@ -570,10 +573,16 @@ class DetectionSpace:
     # method builds trajectory interatction matrix
     def buildQBPMatrix3(self, tr_list: list[Trajectory]):
         print("this is build QBP 3")
+        return self.buildQBPMatrixX(tr_list, type=1)
+    
+    # method builds trajectory interatction matrix
+    def buildQBPMatrixX(self, tr_list: list[Trajectory], type=1):
+        print("this is build QBP")
         # 1. calculate q_ii terms ("merit terms")
         Q_ii = [] # list of q_ii (trajectory scores, "merit terms")
         for tr in tr_list:
-            q_ii = tr.getScore2()
+            # q_ii = tr.getScore2()
+            q_ii = tr.getScoreX(type=type)
             Q_ii.append(q_ii)
         
         Q = np.diag(Q_ii) # make diagonal matrix
@@ -588,7 +597,8 @@ class DetectionSpace:
             n = m+1 # calculate only terms above diagonal, because Q is symmetric (Q[i,j] = Q[j,i])
             while( n <= (n_tr -1)):
                 # 1. calculate interaction cost (points that are in intersection of both hypotheses)
-                q_ij = tr_list[m].getInteractionCost2(tr_list[n])
+                # q_ij = tr_list[m].getInteractionCost2(tr_list[n])
+                q_ij = tr_list[m].getInteractionCostX(tr_list[n], type=type)
 
                 # 2. set q_ij term (q_ij, q_ji)
                 Q[m,n] = q_ij
@@ -596,6 +606,35 @@ class DetectionSpace:
                 n = n+1
             m = m+1
         return Q
+    
+    
+    # method builds interaction matrix to connect trajectories
+    # TODO
+    def buildQBPMatrixII(self, tr_list: list[Trajectory]):
+        return self.buildQBPMatrixX(tr_list, type=2)
+        # print("this is build QBP II:")
+        
+        # # 1. get trajectory scores
+        # print("q_ii:")
+        # Q_ii = [] # list of q_ii (trajectory scores, "merit terms")
+        # for tr in tr_list:
+        #     q_ii = tr.getScoreII()
+        #     Q_ii.append(q_ii)
+        # print(Q_ii)
+
+        
+        # # 2. get interaction costs:
+        # print("q_ij")
+        # tr_I = 1        
+        # tr = tr_list[tr_I]
+        # print(tr, "origin:", tr.origin) # t256
+        # for i in range(len(tr_list)):
+        #     if(i == tr_I):
+        #         continue
+        #     tr_i = tr_list[i]
+        #     q_ij = tr_i.getConnectionCost(tr)
+
+
     
 
     # method solves qbp (returns list of selected hypotheses)

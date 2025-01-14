@@ -16,12 +16,13 @@ FRAMES_PATH = "frames/LaSOT_bird-2/color/"
 FLOWS_PATH = "flow_est/LaSOT_bird-2_1/"
 
 DRAW_DETS=False
-MAIN_DEB= not not True
+MAIN_DEB= True
 # MAIN_DEB=False
-EXT_THR=20 # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory (number of relative holes, essentially))
+# EXT_THR=10 # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory (number of relative holes, essentially))
+EXT_THR=5 
 PO_THR=7 # possibly occluded threshold: number of holes before trajectory is marked as possibly occluded
 UNSELECTED_STRIKE_MAX=5 # maximum number of times that trajectory is not selected but included in set
-SAVE_TRAJECTORIES=False # switch to save trajectories on every selection step for vizualization/debug purposes
+SAVE_TRAJECTORIES=not True # switch to save trajectories on every selection step for vizualization/debug purposes
 
 E1,E2 =  3.3,0.1
 # E1,E2 =  2.3,0.1
@@ -289,39 +290,190 @@ def setFrameFlowAtI(dspace: DetectionSpace, i: int):
         h,w = dspace.hw
         dspace.flow_map=np.zeros((h,w,2)).astype(np.uint8) # optical flow (outta this frame)
 
+# II. qbp-specific functions:
+# function merges trajectories in tr_list into single trajectory
+def mergeTrajectories(tr_list:list[Trajectory], time_window=20, max_space_diff=100.0) -> Trajectory:
+    t_merged = None # first
+    # sort 'em by time:
+    tr_list.sort(key=lambda x: x.X[0].t)
+    
+    min_id = 0
+    merge_scores = []
+    for t in tr_list:
+        if(t_merged is None):
+            t_merged = t.getCopy()
+            min_id = t.id
+            t_merged.T2[t] = 1.0 # first one gets one
+
+        else:
+            # must do: X, D2
+            # should do: holes, holes_ref, term, color
+            
+            connection_prob = t_merged.getConnectionProb(t, time_window, max_space_diff) # this should be before merging of X
+            t.X[0].color = [10,10,150]
+            t_merged.X = t_merged.X + t.X
+            t_merged.D2 = {**t_merged.D2, **t.D2}
+            t_merged.T2 = {**t_merged.T2, **t.T2} # also merge T2
+
+            t_merged.holes = t_merged.holes + t.holes
+            t_merged.term = t.term
+            if(t.id < min_id):
+                min_id = t.id
+            
+            # get connection score:
+            t_merged.T2[t] = connection_prob
+        merge_scores.append(t_merged.T2[t])
+    # print("scores: ",merge_scores)
+    # t_merged.id = min_id #keep id-s unique
+    return t_merged
+
+# function generates and returns all possible connections with other trajectories (similar to extend, but it works with whole trajectories now)
+def getMergedHypotheses(tr_list: list[Trajectory], time_window=20, max_space_diff=100.0):
+    print("this is getMergedHypotheses: ")
+    mtr_hypotheses = []
+    Trajectory.Tid = 1000 #
+    for tr in tr_list:
+        # print("first one:")
+        # first_tr = tr
+        # print(first_tr, end=", ")
+        # print(first_tr)
+        # tr_set: set[Trajectory] = set(tr_list) - set([first_tr])
+        # print("this %s could connect to:" % (tr))
+        tr_possible_next = tr.getPossibleNext(tr_list)
+        # print(tr_possible_next)
+        all_possible_next = extendAllPossibleNext(tr, [tr],tr_possible_next,tr_list)
+        mtr_hypotheses = mtr_hypotheses + all_possible_next
+        
+        
+    #     print("   -----   ")
+    # print(mtr_hypotheses)
+    # print(len(mtr_hypotheses))
+    return mtr_hypotheses
+
+# metod extends trajectories
+# t: current trajectory
+# collected: to be merged
+# possible next: possible next trajectories that current can 'see'
+# all_trs: all trajectories (because we do not have it in dspace)
+def extendAllPossibleNext(t:Trajectory, collected:list[Trajectory], possible_next: list[Trajectory], all_trs: list[Trajectory]):
+    # 1. check if there are no more possible next
+    if(not possible_next):
+        # merge 'em
+        t_merged = mergeTrajectories(collected)
+        print("merged ",collected, " -> ", t_merged)
+        # return it
+        return [t_merged]
+
+    mtr_hypotheses = []
+    # 2. possible_next_from_this = extendAllPossibleNext()
+    for tr in possible_next:
+        tr_possible_next = tr.getPossibleNext(all_trs, max_space_diff=50)
+        collected.append(tr) # add it
+        possible_next_trs = extendAllPossibleNext(tr, collected, tr_possible_next, all_trs)
+        collected.pop() # remove it
+        mtr_hypotheses = mtr_hypotheses + possible_next_trs
+    
+    # 3. return all collected trajectories
+    return mtr_hypotheses
 
 # main:
 def main():
-    dspace = DetectionSpace(1,1)
-    Q=np.array([
-        [ 22.398, -11.782,  -0.,     -0.,     -0.,     -0.,     -0.   ],
-        [-11.782,  21.421,  -0.,     -0.,     -0.,     -0.,     -0.   ],
-        [ -0.,     -0.,      6.417,  -0.   ,  -0.   ,  -0.   ,  -0.   ],
-        [ -0.,     -0.,     -0.   ,   4.589,  -0.   ,  -0.   ,  -0.   ],
-        [ -0.,     -0.,     -0.   ,  -0.   ,  11.098,  -5.599,  -0.   ],
-        [ -0.,     -0.,     -0.   ,  -0.   ,  -5.599,  10.18 ,  -0.   ],
-        [ -0.,     -0.,     -0.   ,  -0.   ,  -0.   ,  -0.   ,   1.   ]])
+    # get saved data:
+    abc = []
+    with open('trs.p', 'rb') as fp:
+        abc = pickle.load(fp)
+    # print(abc)
+    t_off, t_global, tr_fin, tr = abc
+    # ------------
+
+
+    # INIT DSPACE
+    frame = getFrameAtI(t_global,DATA_ROOT+FRAMES_PATH)
+    h,w,_ = np.shape(frame)
+    dspace = DetectionSpace(h,w, time_offset=(t_global)) # also pass time offset for using correct indices
+    dspace.use_flow = True
     
-    Q=np.array([
-        [ 6.417,  -0.   ,  -0.   ,  -0.   ,  -0.   ],
-        [-0.   ,   4.589,  -0.   ,  -0.   ,  -0.   ],
-        [-0.   ,  -0.   ,  11.098,  -5.599,  -0.   ],
-        [-0.   ,  -0.   ,  -5.599,  10.18 ,  -0.   ],
-        [-0.   ,  -0.   ,  -0.   ,  -0.   ,   1.   ]])
-    Q=np.array([
-        [ 6,  -0.   ,  -0.   ,  -0.    ],
-        [-0.   ,   4,  -0.   ,  -0.    ],
-        [-0.   ,  -0.   ,  11,  -6 ],
-        [-0.   ,  -0.   ,  -6,  10  ]])
-    Q=np.array([
-        [ 11,  -6.   ,  -0.   ,  -0.    ],
-        [-6.   ,   10,  -0.   ,  -0.    ],
-        [-0.   ,  -0.   ,  6,  -0 ],
-        [-0.   ,  -0.   ,  -0,  4  ]])
+    # set last frame
+    dspace.lastFrame = frame.copy()
+    dspace.map = frame
+
+    # set flow map
+    flow = getFlowAtI(t_global, DATA_ROOT+FLOWS_PATH)
+    flow_img = flow2img(flow)
+    dspace.flow_map = flow
+    dspace.last_flow_img = flow_img.copy()
+    dspace.flow_img = flow_img
+    # END INIT DSPACE
+
+
+    # draw trajectories:
+    print("all trajectories:")
+    print("fin:")
+    for t in tr_fin:
+        t: Trajectory = t
+        # print("t"+str(t.id)+" c="+str(t.color[2])+", len="+str(len(t.X)), "from:", t.X[0].t, "to:", t.X[-1].t)
+        print("t%-5s c=%-3d, len=%-4d, score=%9.4f %5d - %-5d" % (t.id, t.color[2], len(t.X), t.getScore2(), t.X[0].t, t.X[-1].t))
+        t.detectionSpace = dspace
+        t.T2 = {}
+        t.drawToSpace()
+    print("not fin:")
+    for t in tr:
+        t: Trajectory = t
+        print("t%-5s c=%-3d, len=%-4d, score=%9.4f %5d - %-5d" % (t.id, t.color[2], len(t.X), t.getScore2(), t.X[0].t, t.X[-1].t))
+        t.detectionSpace = dspace
+        t.T2 = {}
+        t.drawToSpace()
+    print("--------------------------")
+
+    tr_all = tr_fin + tr
+
+
+    # MAKE CONNECTION HYPOTHESES:
+
+    merged_trs = getMergedHypotheses(tr_all)
+    print(merged_trs)
+    print(len(merged_trs))
+    dspace.showSpace(draw_dets=False)
+
+
+
+    # # print(tr_all)
+    Q = dspace.buildQBPMatrixX(merged_trs, type=2)
     print(Q)
-    print(dspace.solveQBP(Q))
-    print(dspace.solveQBP2(Q, debug=True))
-    pass
+    res = dspace.solveQBP2(Q)
+    print(res)
+    v = res[0]
+    
+    selected_merged = []
+    for i in range(len(v)):
+        if(v[i] == 1):
+            selected_merged.append(merged_trs[i])
+
+   
+    #     # print(tr_to_merge)
+    #     tr_merged = mergeTrajectories(tr_to_merge)
+    #     # print("tr_merged:")
+    #     # print("t%-5s c=%-3d, len=%-4d, score=%9.4f %5d - %-5d" % (tr_merged.id, tr_merged.color[2], len(tr_merged.X), tr_merged.getScore2(), tr_merged.X[0].t, tr_merged.X[-1].t))
+    #     trs_merged.append(tr_merged)
+
+    i = 0
+    n = len(selected_merged)
+    # draw to separate window
+    d2_winname = "dspace_win2"
+    cv.namedWindow(d2_winname, cv.WINDOW_NORMAL)
+    try:
+        while True:
+            tr: Trajectory = selected_merged[i]
+            dspace.clearSpace()
+            tr.drawToSpace()
+            dspace.showSpace(draw_dets=False, dspace_winname=d2_winname)
+            i = (i+1) % n
+    except KeyboardInterrupt:
+        print()
+        print("fin :>")
+
+
+
 
 # debug main:
 def main_d():
@@ -343,8 +495,10 @@ def main_d():
     FLOWS_PATH = "flow_est/LaSOT_bird-2_1/"
     DETS_FILE = "detections/LaSOT_bird-2.txt"
     # T_OFFSET = 500 + 653 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
-    T_OFFSET = 1160
-    n = 0
+    T_OFFSET = 1160 # constant: starting time (t_global) (used also to align DetectionSpace.D indices (as it expects t0 at index 0))
+    # T_OFFSET = 798
+    # T_OFFSET = 1
+    n = 0 # number of previous frames for trajectory init
 
     # testing squares:
     # FRAMES_PATH = "testing/sequence/"
@@ -403,99 +557,168 @@ def main_d():
     
 
     # EXTEND
+    # skip_n = 790
     skip_n = 35
+    skip_n = 5
     skip_n = 0
-    for i in range(n_res):
-        print("______________")
-        print("[at time "+str(t_global)+"]")
-        print("      \/ ")
-        # init new frame:
-        next_dets=D13[t_global]
-        print("main: next dets: ",next_dets)
-        dspace.D.append(next_dets)
-        setFrameFlowAtI(dspace,t_global)
-        # end init new frame
+    try:
+        for i in range(n_res):
+            print("______________")
+            print("[at time "+str(t_global)+"]")
+            print("      \/ ")
+            # init new frame:
+            next_dets=D13[t_global]
+            print("next dets: ",next_dets)
+            dspace.D.append(next_dets)
+            setFrameFlowAtI(dspace,t_global)
+            # end init new frame
 
-        # extend trajectories
-        print(len(tr))
-        used_dets: set[Detection] = set()
-        tr_next: list[Trajectory] = []
-        print("[EXTENDING TRAJECTORIES]")
-        for t in tr:
-            tr_next_from_same: list[Trajectory] = []
-            # [TODO] - finish
-            if(not t.term): # if not terminated, extend it
-                tr_next_from_same.append(t) # append current if not terminated
-                t_prev = t.getCopy(deep=False) # also include current trajectory, add it to hypothesis selection
-                t_prev.term = True # previous is terminated
-                tr_next_from_same.append(t_prev) # append copy of this (for merging forks)
-                used_dets_current, forked_tr = t.extend4() # get set of used detections and forks (for starting new trajectories from others), list of new trajectories (forks) (add 'em to tr)
-                tr_next_from_same = tr_next_from_same + forked_tr
-                used_dets.update(used_dets_current)
-            else: # if terminated, do not include it in hypothesis selection, but separately
-                tr_fin.append(t)
+            # extend trajectories
+            print("n_tr: ",len(tr))
+            used_dets: set[Detection] = set()
+            tr_next: list[Trajectory] = []
+            print("[EXTENDING TRAJECTORIES]")
+            for t in tr:
+                tr_next_from_same: list[Trajectory] = []
+                # [TODO] - finish
+                
+                # tr_next_from_same.append(t) # append current if not terminated
+                # # used_dets_current, forked_tr = t.extend4()
+                # used_dets_current, forked_tr = t.extend4(add_est=True)
+                # tr_next_from_same = tr_next_from_same + forked_tr
+                # used_dets.update(used_dets_current)
+                
+                # if((not t.term) and (t.holes_ref <= EXT_THR)): # if not terminated, extend it
+                if((not t.term) and (t.holes_ref <= EXT_THR)): # if not terminated, extend it
+                    tr_next_from_same.append(t) # append current if not terminated
+                    # include current trajectory (not extended), mark it as terminated
+                    t_prev = t.getCopy(deep=False) # also include current trajectory, add it to hypothesis selection
+                    t_prev.term = True # previous is terminated
+                    tr_next_from_same.append(t_prev)
+
+                    # include current trajectory and extend it
+                    # used_dets_current, forked_tr = t.extend4(det_add_thr=0)
+                    used_dets_current, forked_tr = t.extend4() # get set of used detections and forks (for starting new trajectories from others), list of new trajectories (forks) (add 'em to tr)
+                    tr_next_from_same = tr_next_from_same + forked_tr
+                    used_dets.update(used_dets_current)
+                else: # if terminated, do not include it in hypothesis selection, but separately
+                    tr_fin.append(t)
+                
 
 
-            first = True
-            for tt in tr_next_from_same:
-                if(first):
-                    first = False
-                    print(">>> t"+str(tt.id)+" - origin:",tt.origin,"score:",tt.getScore2(), tt.X[-2:])
-                else:
-                    print("|-> t"+str(tt.id)+" - origin:",tt.origin,"score:",tt.getScore2(),tt.X[-2:])
-            tr_next = tr_next + tr_next_from_same
-        print("[DONE EXTENDING]")
+                first = True
+                for tt in tr_next_from_same:
+                    if(first):
+                        first = False
+                        print(">>> t"+str(tt.id)+" - origin:",tt.origin,"score:",tt.getScore2(), "color:",tt.color, tt.X[-2:], "len:",len(tt.X))
+                    else:
+                        print("|-> t"+str(tt.id)+" - origin:",tt.origin,"score:",tt.getScore2(), "color:",tt.color,tt.X[-2:], "len:",len(tt.X))
+                tr_next = tr_next + tr_next_from_same
+            print("[DONE EXTENDING]")
 
-        tr = tr_next
+            tr = tr_next
 
-        # # all hypothesis of this iteration
-        # for t in tr_next:
-        #     # print("t"+str(t.id)+" - origin:",t.origin,"score:",t.getScore2(), t.X[-3:])
-        #     print("t"+str(t.id)+" - origin:",t.origin,"score:",t.getScore2())
+            # # all hypothesis of this iteration
+            # for t in tr_next:
+            #     # print("t"+str(t.id)+" - origin:",t.origin,"score:",t.getScore2(), t.X[-3:])
+            #     print("t"+str(t.id)+" - origin:",t.origin,"score:",t.getScore2())
 
+            
+            # start new trajectories from points that do not belong to any trajectory
+            # 1. get difference of used dets and next dets, start new trajectories from unused ones
+            unused_dets = set(next_dets) - used_dets
+            # print(used_dets)
+            print("used dets: ", used_dets," unused dets: ", unused_dets)
+            for d in unused_dets:
+                t_new = Trajectory(d, dspace)
+                t_new.build2()
+                tr.append(t_new)
+
+            # hypothesis selection (build qbp, )
+            print("building Q")
+            tr.sort(key=lambda x: x.getScore2(), reverse=True) #
+            print("tr sorted: ", tr)
+            Q = dspace.buildQBPMatrix3(tr)
+            print(Q)
+            v = dspace.solveQBP2(Q)
+            print(v)
+            tr_next2 = []
+
+            # keep only selected:
+            print("selected: ", end="")
+            for i in range(len(v[0])):
+                if(v[0][i] == 1):
+                    tr_i = tr[i]
+                    tr_next2.append(tr_i)
+                    print("t"+str(tr_i.id),end=" ", flush=True)
+                    # if(tr_i.id != 143):
+                    #     tr_i.drawToSpace()
+                    tr_i.drawToSpace()
+            tr = tr_next2
+            print()
+
+            # print also terminated ones:
+            print("len tr fin: ",len(tr_fin))
+            for t in tr_fin:
+                t.drawToSpace(color=[100,100,100])
+                # t.drawToSpace()
+
+            # # buildNprint Q:
+            # Q = dspace.buildQBPMatrix3(tr)
+            # print(Q)
+            # for t in tr:
+            #     t.drawToSpace()
+            if(skip_n <= 0):
+                dspace.showSpace(draw_dets=DRAW_DETS)
+                dspace.clearSpace()
+            else:
+                skip_n = skip_n-1
+            
+            t_global = t_global + 1 # increase time in each iter
+    except KeyboardInterrupt:
+        # save tr, tr_fin and T_OFFSET
+        print("fin")
+        if(SAVE_TRAJECTORIES):
+            with open('trs.p', 'wb') as fp: # fp: file pointer?
+                abc = [T_OFFSET, t_global, tr_fin, tr]
+                pickle.dump(abc, fp)
         
-        # start new trajectories from points that do not belong to any trajectory [TODO]
-        # 1. get difference of used dets and next dets, start new trajectories from unused ones
-        unused_dets = set(next_dets) - used_dets
-        print(used_dets)
-        print("used dets: ", used_dets," unused dets: ", unused_dets)
-        for d in unused_dets:
-            t_new = Trajectory(d, dspace)
-            t_new.build2()
-            tr.append(t_new)
-
-        # hypothesis selection (build qbp, )
-        print("building Q")
-        tr.sort(key=lambda x: x.getScore2(), reverse=True) #
-        print("tr sorted: ", tr)
-        Q = dspace.buildQBPMatrix3(tr)
-        print(Q)
-        v = dspace.solveQBP2(Q)
-        print(v)
-        tr_next2 = []
-
-        # keep only selected:
-        print("selected: ", end="")
-        for i in range(len(v[0])):
-            if(v[0][i] == 1):
-                tr_i = tr[i]
-                tr_next2.append(tr_i)
-                print("t"+str(tr_i.id),end=" ", flush=True)
-                # if(tr_i.id != 143):
-                #     tr_i.drawToSpace()
-                tr_i.drawToSpace()
-        tr = tr_next2
-
-        if(skip_n <= 0):
-            dspace.showSpace(draw_dets=DRAW_DETS)
-            dspace.clearSpace()
-        else:
-            skip_n = skip_n-1
-        t_global = t_global + 1 # increase time in each iter
     # END EXTEND
 
 
-# other mains:
+# other mains/mainds:
+# def main_d():
+#     print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
+#     dspace = DetectionSpace(1,1)
+#     Q=np.array([
+#         [ 22.398, -11.782,  -0.,     -0.,     -0.,     -0.,     -0.   ],
+#         [-11.782,  21.421,  -0.,     -0.,     -0.,     -0.,     -0.   ],
+#         [ -0.,     -0.,      6.417,  -0.   ,  -0.   ,  -0.   ,  -0.   ],
+#         [ -0.,     -0.,     -0.   ,   4.589,  -0.   ,  -0.   ,  -0.   ],
+#         [ -0.,     -0.,     -0.   ,  -0.   ,  11.098,  -5.599,  -0.   ],
+#         [ -0.,     -0.,     -0.   ,  -0.   ,  -5.599,  10.18 ,  -0.   ],
+#         [ -0.,     -0.,     -0.   ,  -0.   ,  -0.   ,  -0.   ,   1.   ]])
+    
+#     Q=np.array([
+#         [ 6.417,  -0.   ,  -0.   ,  -0.   ,  -0.   ],
+#         [-0.   ,   4.589,  -0.   ,  -0.   ,  -0.   ],
+#         [-0.   ,  -0.   ,  11.098,  -5.599,  -0.   ],
+#         [-0.   ,  -0.   ,  -5.599,  10.18 ,  -0.   ],
+#         [-0.   ,  -0.   ,  -0.   ,  -0.   ,   1.   ]])
+#     Q=np.array([
+#         [ 6,  -0.   ,  -0.   ,  -0.    ],
+#         [-0.   ,   4,  -0.   ,  -0.    ],
+#         [-0.   ,  -0.   ,  11,  -6 ],
+#         [-0.   ,  -0.   ,  -6,  10  ]])
+#     Q=np.array([
+#         [ 11,  -6.   ,  -0.   ,  -0.    ],
+#         [-6.   ,   10,  -0.   ,  -0.    ],
+#         [-0.   ,  -0.   ,  6,  -0 ],
+#         [-0.   ,  -0.   ,  -0,  4  ]])
+#     print(Q)
+#     print(dspace.solveQBP(Q))
+#     print(dspace.solveQBP2(Q, debug=True))
+#     pass
 # def main_d():
 #     print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
 

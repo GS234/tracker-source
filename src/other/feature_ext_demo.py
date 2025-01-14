@@ -375,14 +375,16 @@ def main2():
 
     # patches1 = patchesInBB(pca_features_rgb, bb1, xy_off=[pad_l, pad_u])
     patches1 = patchesInBB(features1[pca_features_fg], bb1, xy_off=[pad_l, pad_u])
+    patches2 = patchesInBB(pca_features_rgb, bb1, xy_off=[pad_l, pad_u])
     print(patches1)
     # showInNamed("p1 - patches:", patches1[..., ::-1])
 
     # 5. RoiPooled patches:
-    patches_rp1 = roiPool(patches1)
+    # patches_rp1 = roiPool(patches1, use_2d=False)
+    patches_rp1 = roiPool(patches2, use_2d=False)
     print(patches_rp1)
-    # showInNamed("p1 - pooled (3x3):", patches_rp1[..., ::-1])
-    print(matSimScore(patches_rp1, patches_rp1))
+    showInNamed("p1 - pooled (3x3):", patches_rp1[..., ::-1])
+    # print(matSimScore(patches_rp1, patches_rp1))
 
 
 

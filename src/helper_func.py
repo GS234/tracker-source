@@ -176,16 +176,18 @@ def getVecMagAng(vec):
 # function takes region of optical flow map and calculates displacement vector (median of all pixels within bb)
 def getMotionVec(flo_region, mean=False):
     flo_reg_resh = flo_region.reshape((-1,2))
-    # print(flo_reg_resh)
-    # print(flo_reg_resh)
     vec=[0,0]
+    if(not flo_region.any()):
+        print("[WARN] getMotionVec: flow region empty, returning ",vec)
+        return np.array(vec)
+    
     if(mean):
         vec = np.mean(flo_reg_resh,axis=0)
         # print("mean: ",vec)
     else:
         vec = np.median(flo_reg_resh,axis=0)
         # print("median: ",vec)
-    max = np.amax(flo_reg_resh, axis=0)
+    # max = np.amax(flo_reg_resh, axis=0)
     # print("max: ", max)
     return vec
 
@@ -359,9 +361,6 @@ def showHists(hists:list, c=1):
     # plt.bar(x,arr)
     plt.show()
 
-if __name__ == "__main__":
-    filename = "../data/detections/LaSOT_car-17.txt"
-    readDetFile(filename=filename)
 
 def getTrColor():
     return tr_colors[int(random.random()*len(tr_colors))]
@@ -370,24 +369,17 @@ def getTrColor():
 
 # method draws x instead of .
 def drawX(image, c:list, color=[255,255,255]) -> None:
-    x_shape = np.array([
-        [-3,-3],
-        [-2,-2],
-        [-1,-1],
-        [0,0],
-        [1,1],
-        [2,2],
-        [3,3],
-        [-3,3],
-        [-2,2],
-        [-1,1],
-        [1,-1],
-        [2,-2],
-        [3,-3],
-    ])
-    x_shape = x_shape + np.array(c).astype(np.int32) # add origin
-    p_list = [(x[1], x[0]) for x in x_shape]
+    drawShape(shapes['x'], image,c,color )
+
+def drawO(image, c:list, color=[255,255,255]) -> None:
+    drawShape(shapes['o'], image,c,color )
+    
+
+def drawShape(shape, image, c:list, color=[255,255,255]) -> None:
+    shape = shape + np.array(c).astype(np.int32) # add origin
+    p_list = [(x[1], x[0]) for x in shape]
     coords2map(p_list, image, color=color)
+
 
 def drawLine(image, x1, x2, color=[0,0,255]):
     x1 = np.array(x1)
@@ -459,7 +451,7 @@ def IoU(d1:Detection, d2: Detection):
         U = np.prod(d1.bb[2:]) + np.prod(d2.bb[2:]) - I
         iou =  I/U
 
-    return iou  
+    return iou
 
 tr_colors=[
     (158,98,64),
@@ -484,5 +476,60 @@ tr_colors=[
     (177,204,116)
 ]
 
+shapes = {
+    'o': np.array([
+        [-1,-2],
+        [0,-2],
+        [1,-2],
+        
+        
+        [-1,2],
+        [0,2],
+        [1,2],
+        
+        
+        [-2,-1],
+        [2,-1],
+        [-2,0],
+        [2,0],
+        [-2,1],
+        [2,1],
+    ]),
+    'x': np.array([
+        [-3,-3],
+        [-2,-2],
+        [-1,-1],
+        [0,0],
+        [1,1],
+        [2,2],
+        [3,3],
+        [-3,3],
+        [-2,2],
+        [-1,1],
+        [1,-1],
+        [2,-2],
+        [3,-3],
+    ])
+}
 
+
+
+# if __name__ == "__main__":
+#     # filename = "../data/detections/LaSOT_car-17.txt"
+#     # readDetFile(filename=filename)
+#     print(shapes['o'])
+#     print(shapes['x'])
+
+#     n=11
+#     map = np.zeros((n,n, 3)).astype(np.uint8)
+
+#     drawO(map, [5,5], [0,255,255])
+#     # drawX(map, [5,5], [250,200,125])
+    
+
+
+#     cv.namedWindow("map", cv.WINDOW_NORMAL)
+#     cv.resizeWindow("map", 500,500)
+#     cv.imshow("map",map)
+#     cv.waitKey(0)
 

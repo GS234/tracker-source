@@ -3,7 +3,7 @@ import numpy as np
 from Detection import Detection, TDet, TDet_from_Detection
 import math
 import copy
-from helper_func import detSet2map, getTrColor, showHists, compareHists, drawX, drawLine, drawBoundingBox, getVecMagAng, getMotionVec, getRect, getRectBb # helper functions
+from helper_func import detSet2map, getTrColor, showHists, compareHists, drawX, drawO, drawLine, drawBoundingBox, getVecMagAng, getMotionVec, getRect, getRectBb # helper functions
 import cv2 as cv
 
 # to avoid cyclic import (detection space imports trajectory, trajectory imports detection space)
@@ -12,8 +12,10 @@ if TYPE_CHECKING:
     from DetectionSpace import DetectionSpace
 
 FLOW_WINDOW_SIZE = 10
-EST_SCORE = 0.001 # score of estimated det (if there is no detection)
+# EST_SCORE = 0.001 # score of estimated det (if there is no detection)
+EST_SCORE = 0.2 # score of estimated det (if there is no detection)
 DET_ADD_THR = 0.50 # threshold to add detection to trajectory
+MAX_HOLES = 10
 
 class Trajectory:
     # assumptions:
@@ -42,9 +44,10 @@ class Trajectory:
 
         self.D: set[Detection] = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
         
-        self.D2: dict[Detection, float] = {}
+        self.D2: dict[Detection, float] = {} # 'new' scores
+        self.T2: dict[Trajectory, float] = {} # trajectory -> merge score (these scores are added when merging trajectories)
         self.X: TDet = [ ] # trajectory points ("trajectory" detections)
-        self.scores: list[float] = [] # scores of detections (relative to estimate; H_t -> score of trajectory point)
+        self.scores: list[float] = [] # scores of detections (relative to estimate; H_t -> score of trajectory point) (kinda redundant, D2 is used mostly)
         
         self.S = 0 # score/support of the trajectory - getScore
         self.holes = 0 # counter: how many trajectory points have been added considering only estimate of next detection
@@ -65,23 +68,27 @@ class Trajectory:
     # draw it:
     # method draws trajectory to detection space
     def drawToSpace(self, color=None):
+        color_is_set = True
         if(color is None):
+            color_is_set = False
             color = self.color
-        x_brightness = 1.0
-        if(len(self.X) > 0): # if has one
-            drawX(self.detectionSpace.map, self.X[0].x, x_brightness)
+        x_color = (np.array(self.color).astype(np.float32)*0.4).astype(np.uint8)  #[0,0,0]
         if(len(self.X) > 1): # if has many
             for i in range(len(self.X)-1):
                 xi = self.X[i].x
                 di1 = self.X[i+1] # next detection
-                if(di1.color is not None):
-                    color=di1.color
-                else:
-                    color = self.color
+                if(not color_is_set):
+                    if(di1.color is not None):
+                        color=di1.color
+                    else:
+                        color = self.color
                 xi1 = di1.x
                 drawLine(self.detectionSpace.map, xi,xi1,color)
                 # self.detectionSpace.drawDsearchRegionAroundDetection(xi1)
-            drawX(self.detectionSpace.map, self.X[-1].x, x_brightness)
+            drawX(self.detectionSpace.map, self.X[-1].x, x_color) # end
+        # draw on top of everything else
+        if(len(self.X) > 0): # if has one
+            drawO(self.detectionSpace.map, self.X[0].x, x_color) # start
     
     # method returns copy of this trajectory
     def getCopy(self, deep=True) -> Trajectory:
@@ -92,6 +99,7 @@ class Trajectory:
         t_ret.holes = self.holes
         t_ret.holes_ref = self.holes_ref
         t_ret.not_selected_strike = self.not_selected_strike
+        t_ret.color = self.color
         
         # things to deepcopy (do we really need to deepcopy this?)
 
@@ -674,16 +682,17 @@ class Trajectory:
     
 
 
-    # new methods:
+    # [NEW METHODS]:
 
     # new main extend method
-    def extend4(self, prob_threshold=0, debug=False) -> tuple[set[Detection],list[Trajectory]]:
+    # some refactoring is prob needed
+    def extend4(self, det_add_thr=DET_ADD_THR, add_est=False, debug=False) -> tuple[set[Detection],list[Trajectory]]:
         if(self.term):
             return (set(),[self])
         td_current: TDet = self.X[-1] # current tdet (last trajectory point)
         # print("current of t"+str(self.id)+": ",td_current, self.X)
         td_next: TDet = self.estimateNextUsingFlow(td_current)
-        
+
         # collectWithin2:
         next_dets, next_probs = self.detectionSpace.collectWithin2(td_next.t, td_next)
 
@@ -704,15 +713,17 @@ class Trajectory:
         n_dets = len(next_dets)
         used_dets: set[Detection] = set()
         next_tr: list[Trajectory] = list()
-                
         if(n_dets > 0): # we have detections: first: continue this one, every else: copy&add
+            this_current = self.getCopy(deep=False) # current trajectory
             i2 = 0 # secondary i - to determine if add to current or copy&add (and also allow using threshold)
+
             for i in range(n_dets):
                 d_i = next_dets[i]
                 d_i_prob = next_probs[i]
 
-                if(d_i_prob >= DET_ADD_THR):
-                    # if(d_i_prob >= prob_threshold): # maybe later
+                if(d_i_prob >= det_add_thr):
+                # if(d_i_prob >= 0):
+                    self.holes_ref = 0
                     next_tdet = TDet_from_Detection(d_i) # has no v, theta, important is, that it has bounding box; should probably also compare color model, but when we have one
                     used_dets.add(d_i)
                     
@@ -722,16 +733,22 @@ class Trajectory:
                         self.D2[d_i]=d_i_prob # also add score to trajectory
                         
                     else:
-                        next_t = self.getCopy(deep=False)
-                        print("[!] FORKING t"+str(self.id)+" INTO t", str(next_t.id), "(iou: ",d_i_prob," )")
+                        next_t = this_current.getCopy(deep=False)
+                        print("[!] FORKING t"+str(self.id)+" INTO t"+str(next_t.id), "(iou: ",d_i_prob," )")
                         next_t.X.append(next_tdet)
-                        next_t.scores.append(d_i_prob)
                         next_t.D2[d_i]=d_i_prob # also add score to trajectory
                         next_tr.append(next_t)
                     
                     i2 = i2+1 # increase if deteciton is appended
-
+            if(i2 == 0): # it means that no detection has been added, so continue current trajectory with estimate
+                self.holes_ref = self.holes_ref + 1
+                self.X.append(td_next)
+                self.D2[td_next]=EST_SCORE
+            # elif(add_est): # add one additional trajectory: one that is continued with estimate
+            #     next_tr.append(t_estimated)
+                
         else:
+            self.holes_ref = self.holes_ref + 1
             self.X.append(td_next) # continue current, with estimate
             self.D2[td_next]=EST_SCORE # as detection add estimate
         return (used_dets, next_tr)
@@ -741,15 +758,36 @@ class Trajectory:
         self.X.append(self.origin)
         self.D2[self.origin] = 1.0
     
-    # methods used to build QPB matrix
+    # methods used to build QPB matrix:
+    # WRAPPER METHODS TO CHOOSE CORRECT METHOD (should probably do differently) (FUJ)
+    def getScoreX(self, type=1):
+        if(type == 1):
+            return self.getScore2()
+        elif(type==2):
+            return self.getScoreII()
+        else:
+            return 0
+        
+    def getInteractionCostX(self, other, type=1):
+        if(type==1):
+            return self.getInteractionCost2(other)
+        elif(type==2):
+            return self.getInteractionCostII(other)
+        else:
+            return 0
+    # -----------------------------------------------
 
-    # simply sum of all scores
+
+
+    # I. qbp:
+    # method calculates score of trajectory (simply sum of all detecion scores)
     def getScore2(self):
         return sum(self.D2.values())
     
     # method returns interaction cost of two trajectories
     def getInteractionCost2(self, other_t: Trajectory):
-        P1 = 0.05 # tie-breaker parameter
+        # P1 = 0.05 # tie-breaker parameter
+        P1 = 0.1 # tie-breaker parameter
         # 1. get points in intersection
         det_intersect = self.D2.keys() & other_t.D2.keys()
 
@@ -769,10 +807,10 @@ class Trajectory:
 
             print("[!] JOIN FORK: score of this (t"+str(self.id)+"): ",score_of_this, "score of other (t"+str(other_t.id)+"):", score_of_other)
             
-            q_ij = other_t.getScore2() * -(0.5+P1)
+            q_ij = other_t.getScore2() * -(0.5+P1) # penalize other
             # q_ij = -200
             if(score_of_other > score_of_this):
-                q_ij = self.getScore2() * -(0.5+P1)
+                q_ij = self.getScore2() * -(0.5+P1) # if this has weaker det prob, penalize this (is this really necessary? weaker does not get selected either way)
                 # q_ij = -100.0
             # print("<---------")
         # if there are many, then it is probably fork or previous
@@ -783,13 +821,91 @@ class Trajectory:
                 S_err = S_err + int_cost
 
             q_ij = S_err * -(0.5+P1)
+        # print("ic t"+str(self.id)+" - t"+str(other_t.id)+":", q_ij," n intersect: ", len(det_intersect))
         return q_ij
-    # ------------------------------
+    
 
+    # II. qbp: connecting trajectories
+    def getScoreII(self):
+        score=self.getScore2()
+        score = score + sum(self.T2.values())
+        return score
 
-
+    # method calculates connection cost of two trajectories (for 2nd stage: build Q for joining trajectories)
+    def getInteractionCostII(self, other_t: Trajectory):
+        # P1 = 0.05 # tie-breaker parameter
+        P1 = 0.1 # tie-breaker parameter
+        # 1. get points in intersection
+        tr_intersect = self.T2.keys() & other_t.T2.keys()
         
+        # choose weaker hypothesis
+        tr_l = other_t # assume weaker is the other
+        if(other_t.getScoreII() > self.getScoreII()):
+            tr_l = self # change if necessary
+        
+        # 2. calculate g of intersecting points (with D of the weaker hypothesis)
+        q_ij = 0
+        S_err = 0
+        for tr_i in tr_intersect:
+            int_cost = sum(tr_i.D2.values())+tr_l.T2[tr_i] ## !!! fix
+            S_err = S_err + int_cost
 
+        q_ij = S_err * -(0.5+P1)
+        # print("ic t"+str(self.id)+" - t"+str(other_t.id)+":", q_ij," n intersect: ", len(tr_intersect))
+        return q_ij
+        
+    
+    def getConnectionProb(self, other_t: Trajectory, time_window=20, max_space_diff=100.0):
+        # print("this is get connection prob: ")
+        first, second = t1t2ToFirstSecond(self, other_t)
+        # print(first.X[0].t, first.X[-1].t, " - ", second.X[0].t, second.X[-1].t)
+        end: TDet = first.X[-1] # end of first
+        begining: TDet = second.X[0] # begining of second
+
+        # 1. check if they live in the same time (first.X[-1].t < second.X[0].t)
+        time_d = begining.t - end.t
+        time_p = 1.0
+        if(time_d >= 0): # it is ok
+            time_rel = time_window-time_d
+            if(time_rel < 0):
+                time_rel = 0.0
+            
+            time_p = float(time_rel)/float(time_window)
+        else: # it is not ok, they live at the same time
+            time_p = 0.0
+        
+        # 2. distance:
+        space_d = begining.x - end.x
+        space_dd = np.sqrt(np.dot(space_d, space_d))
+        space_p =  (max_space_diff - space_dd) / max_space_diff
+        # print("probs: %1.4f, %1.4f; %1.4f" % (time_d, space_dd, time_p*space_p))
+        return time_p*space_p
+    
+    # method returns list of possible next trajectories (of this)
+    def getPossibleNext(self, tr_list, time_window=20, max_space_diff=100):
+        possibleNext = []
+        for t in tr_list:
+            # skip this one
+            if(t == self):
+                continue
+            
+            first = self
+            second = t
+            # first_firstX = first.X[0]
+            first_lastX = first.X[-1]
+            
+            second_firstX = second.X[0]
+            # second_lastX = second.X[-1]
+            time_diff = second_firstX.t-first_lastX.t
+            if(time_diff >= 0 and time_diff < time_window):
+                space_diff = first_lastX.x - second_firstX.x
+                space_diff = np.sqrt(np.dot(space_diff, space_diff))
+                if(space_diff < max_space_diff):
+                    possibleNext.append(t)
+        return possibleNext
+    
+
+    # [END NEW METHODS] ------------------------------
     def __str__(self):
         disabled = ""
         possibly_occluded = ""
@@ -797,7 +913,13 @@ class Trajectory:
             disabled = " (d)"
         if(self.possibly_occluded):
             possibly_occluded  = " (|?|)"
-        return "{t"+str(self.id)+", len="+str(len(self.X))+", S="+ f"{self.S:.4f}" +disabled+possibly_occluded+"}"
+        # return "{t"+str(self.id)+", len="+str(len(self.X))+", S="+ f"{self.S:.4f}" +disabled+possibly_occluded+", c="+str(self.color)+"}"
+        return "{t"+str(self.id)+", len="+str(len(self.X)) +disabled+possibly_occluded+", c="+str(self.color)+"}"
 
     def __repr__(self):
         return self.__str__()
+
+def t1t2ToFirstSecond(t1: Trajectory, t2: Trajectory):
+        if(t1.X[0].t >= t2.X[0].t):
+            return (t2, t1)
+        return t1, t2

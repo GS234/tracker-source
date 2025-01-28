@@ -195,17 +195,30 @@ def getFlowAtI(i, path):
     frame_i = f'{i:08}'
     return np.load(path+frame_i+".npy")
 
-# function returns flow into and outta current frame
-def getFlowToFromAtI(i, path):
-    flow_from = getFlowAtI(i, path)
-    flow_to = np.zeros(np.shape(flow_from)) # return empty if next part throws error
+def getFlowToI(i, path):
     try:
         flow_to = getFlowAtI(i-1, path)
+        return flow_to
     except FileNotFoundError:
         print("[WARN] File not found. Optical flow might not exist at i: ", i)
+        return np.zeros(np.shape(getFlowAtI(i,path)))
     except Exception:
         print("[WARN] Flow to frame at i: ",i," could not be determined due to unknown reason. More info:")
         print(traceback.format_exc())
+        return np.zeros(np.shape(getFlowAtI(i,path)))
+    
+# function returns flow into and outta current frame
+def getFlowToFromAtI(i, path):
+    flow_from = getFlowAtI(i, path)
+    flow_to = getFlowToI(i, path) # return empty if next part throws error
+    # flow_to = np.zeros(np.shape(flow_from)) # return empty if next part throws error
+    # try:
+    #     flow_to = getFlowAtI(i-1, path)
+    # except FileNotFoundError:
+    #     print("[WARN] File not found. Optical flow might not exist at i: ", i)
+    # except Exception:
+    #     print("[WARN] Flow to frame at i: ",i," could not be determined due to unknown reason. More info:")
+    #     print(traceback.format_exc())
     return flow_to, flow_from
 
 
@@ -373,6 +386,9 @@ def drawX(image, c:list, color=[255,255,255]) -> None:
 
 def drawO(image, c:list, color=[255,255,255]) -> None:
     drawShape(shapes['o'], image,c,color )
+
+def drawDot(image, c:list, color=[255,255,255]) -> None:
+    drawShape(shapes['.'],image,c,color)
     
 
 def drawShape(shape, image, c:list, color=[255,255,255]) -> None:
@@ -453,6 +469,23 @@ def IoU(d1:Detection, d2: Detection):
 
     return iou
 
+# some kind of iou, but for vectors
+def vecScore(a,b, l=0.01):
+    score = 1.0
+    a = np.array(a)
+    b = np.array(b)
+    c = -b+a
+    # get distance of vectors:
+    a_d = np.sqrt(np.dot(a,a))
+    b_d = np.sqrt(np.dot(b,b))
+    c_d = np.sqrt(np.dot(c,c))
+    # score = score - (c_d / (a_d+b_d))
+    # print(a_d,b_d)
+    return np.exp(-l*(a_d+b_d)) 
+    
+
+
+
 tr_colors=[
     (158,98,64),
     (222,164,126),
@@ -509,6 +542,9 @@ shapes = {
         [1,-1],
         [2,-2],
         [3,-3],
+    ]),
+    '.': np.array([
+        [0,0]
     ])
 }
 

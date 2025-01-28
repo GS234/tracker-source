@@ -9,4 +9,6 @@ src/hypotheses.*
 src/other_mains.py
 src/backup
 src/other/features.png
-src/trs.p
+src/*.p
+src/Q.txt
+src/q.txt

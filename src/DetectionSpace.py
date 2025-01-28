@@ -159,7 +159,7 @@ class DetectionSpace:
 
     # ----------------------------------------------------------------------------------------
 
-    def showSpace(self, det_color=[0,0,0], draw_dets=True, dspace_winname=None):
+    def showSpace(self, det_color=[0,0,0], draw_dets=True, draw_last_dets_bb=True, dspace_winname=None):
         # draw exit zone (border)
         # off = self.exit_zone
         # exit_zone_color=[0,255,255]
@@ -181,20 +181,21 @@ class DetectionSpace:
             
             # print(last_dets)
             # print()
-            for d in last_dets: # draw bounding boxes around last detections
-                drawBoundingBox(self.map, d.bb)
-                drawX(self.map, d.x)
-                if(self.use_flow):
-                    drawBoundingBox(self.flow_img, d.bb)
-                    drawX(self.flow_img, d.x)
-                    # draw also line in which direction is region moving
-                    
+            if(draw_last_dets_bb):
+                for d in last_dets: # draw bounding boxes around last detections
+                    drawBoundingBox(self.map, d.bb)
+                    drawX(self.map, d.x)
+                    if(self.use_flow):
+                        drawBoundingBox(self.flow_img, d.bb)
+                        drawX(self.flow_img, d.x)
+                        # draw also line in which direction is region moving
+                        
 
-                    # y, x, h, w = d.bb
-                    # flow_region = self.flow_map[x:x+w+1,y:y+h+1] # bounding box image
-                    # motion_vec = getMotionVec(flow_region)
-                    motion_vec = getDetMotionVector(d, self.flow_map)
-                    drawLine(self.flow_img, d.x, (d.x + 10*motion_vec), [0,255,255])
+                        # y, x, h, w = d.bb
+                        # flow_region = self.flow_map[x:x+w+1,y:y+h+1] # bounding box image
+                        # motion_vec = getMotionVec(flow_region)
+                        motion_vec = getDetMotionVector(d, self.flow_map)
+                        drawLine(self.flow_img, d.x, (d.x + 10*motion_vec), [0,255,255])
                     
         # print(map)
         # print(self.map)
@@ -593,17 +594,19 @@ class DetectionSpace:
         n = 0 # column index
 
         # I miss good old for loops from java so much ...
+        iii = 0
         while( m <= (n_tr-1)):
             n = m+1 # calculate only terms above diagonal, because Q is symmetric (Q[i,j] = Q[j,i])
             while( n <= (n_tr -1)):
                 # 1. calculate interaction cost (points that are in intersection of both hypotheses)
                 # q_ij = tr_list[m].getInteractionCost2(tr_list[n])
                 q_ij = tr_list[m].getInteractionCostX(tr_list[n], type=type)
-
+                # print("t%-5d - t%-5d: %-6.2f" % (tr_list[m].id, tr_list[n].id, q_ij))
                 # 2. set q_ij term (q_ij, q_ji)
                 Q[m,n] = q_ij
                 Q[n,m] = q_ij
                 n = n+1
+                iii+=1
             m = m+1
         return Q
     

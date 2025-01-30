@@ -157,18 +157,24 @@ class DetectionSpace:
 
         return color_model_prob
 
+    # method checks if detection entered exit zone
+    # TEST IT
+    def isInExitZone(self, d:Detection):
+        x = d.x[0]
+        y = d.x[1]
+        return ((x < EXIT_ZONE_OFFSET) or (x > self.hw[0]-EXIT_ZONE_OFFSET) or (y < EXIT_ZONE_OFFSET) or (y > self.hw[1]-EXIT_ZONE_OFFSET))
     # ----------------------------------------------------------------------------------------
 
     def showSpace(self, det_color=[0,0,0], draw_dets=True, draw_last_dets_bb=True, dspace_winname=None):
         # draw exit zone (border)
-        # off = self.exit_zone
-        # exit_zone_color=[0,255,255]
-        # ul,bl,ur,br = (off,off),(off,self.hw[0]-off),(self.hw[1]-off, off),(self.hw[1]-off, self.hw[0]-off)
-        # ul,bl,ur,br = np.array(ul),np.array(bl),np.array(ur),np.array(br)
-        # drawLine(self.map, ul,bl,color=exit_zone_color)
-        # drawLine(self.map, ul,ur,color=exit_zone_color)
-        # drawLine(self.map, ur,br,color=exit_zone_color)
-        # drawLine(self.map, bl,br,color=exit_zone_color)
+        off = self.exit_zone
+        exit_zone_color=[100,100,100]
+        ul,bl,ur,br = (off,off),(off,self.hw[0]-off),(self.hw[1]-off, off),(self.hw[1]-off, self.hw[0]-off)
+        ul,bl,ur,br = np.array(ul),np.array(bl),np.array(ur),np.array(br)
+        drawLine(self.map, ul,bl,color=exit_zone_color)
+        drawLine(self.map, ul,ur,color=exit_zone_color)
+        drawLine(self.map, ur,br,color=exit_zone_color)
+        drawLine(self.map, bl,br,color=exit_zone_color)
 
         if(dspace_winname is None):
             dspace_winname = self.dspace_winname

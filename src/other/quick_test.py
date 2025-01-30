@@ -26,17 +26,17 @@ save_loc = "../../data/flow_est/LaSOT_bird-2_1/tt/"
 FLOW_PATH = "../../data/flow_est/LaSOT_bird-2_1/"
 FRAMES_PATH = "../../data/frames/LaSOT_bird-2/color/"
 
-CONVERT_IT = not True
+CONVERT_IT = not not True
 
 def convert_it(filename, save_loc=DATA_ROOT+FLOW_PATH+"flows/"):
     a=open_it(filename)
         
-    i = 4000
+    i = 0
     n = 5000
     
     try:
         while(i < n):
-            frame_i = f'{i:08}'
+            frame_i = f'{i+1:08}'
             np.save(save_loc+frame_i, a[i]) # save as file.npy (numpy matrix)
             i = i+1
     except:
@@ -45,7 +45,7 @@ def convert_it(filename, save_loc=DATA_ROOT+FLOW_PATH+"flows/"):
 
 def main():
     if(CONVERT_IT):
-        convert_it(FLOW_FILE, save_loc=save_loc)
+        convert_it(FLOW_FILE, save_loc=FLOW_PATH)
     else:
         first = True
         for i in range(2950,3200):

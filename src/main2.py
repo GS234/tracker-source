@@ -1,18 +1,22 @@
 from helper_func import *
 from DetectionSpace import DetectionSpace
 from Trajectory import Trajectory
+from OpticalFlow import OpticalFlow
 from Detection import Detection
 import cv2 as cv
 import numpy as np
 import copy # for deepcopy (visualization purposes)
 import pickle
+import argparse # for raft model argument parser
 np.set_printoptions(suppress=True, precision=3, linewidth=1000)
 
 DATA_ROOT = "../data/"
 FRAMES_PATH = "frames/LaSOT_bird-2/color/"
 
-USE_PRECOMPUTED = True # use precomputed optical flow (set to False to calculate it on the go) (flows-path must be set)
+USE_PRECOMPUTED = not True # use precomputed optical flow (set to False to calculate it on the go) (flows-path must be set)
 FLOWS_PATH = "flow_est/LaSOT_bird-2_1/"
+if(not USE_PRECOMPUTED):
+    FLOWS_PATH = "flow_est/LaSOT_bird-2_1/computed/" # this is here to not overwrite existing data, in normal cases it would be same as ^ (FLOWS_PATH)
 
 DRAW_DETS=False
 MAIN_DEB= not  True
@@ -25,14 +29,22 @@ T_INIT_S = 0.5
 
 
 # some main-specific functions:
-def setFrameFlowAtI(dspace: DetectionSpace, i: int):
+# function is used when new flow is computed (on every new frame, for stage III, getFlow is still used, but on files that this thing generated previously)
+def computeOrGetFlowAtI(i:int, optical_flow_gen: OpticalFlow=None):
+    if(not USE_PRECOMPUTED):
+        # return optical_flow_gen.computeFlowAtI(i)
+        return optical_flow_gen.computeFlowAtITest(i) # WARN: this is to test only, on real use cases, use ^ (+1? nekje je pomoje obi-wan error (we'll deal with that some other time))
+    return getFlowAtI(i, DATA_ROOT+FLOWS_PATH)
+
+def setFrameFlowAtI(dspace: DetectionSpace, i: int, optical_flow_gen: OpticalFlow = None):
     # set new frame
     frame = getFrameAtI(i,DATA_ROOT+FRAMES_PATH)
     dspace.lastFrame = frame.copy()
     dspace.map = frame
     
     # set new flow
-    flow_from = getFlowAtI(i, DATA_ROOT+FLOWS_PATH)
+    # flow_from = getFlowAtI(i, DATA_ROOT+FLOWS_PATH)
+    flow_from = computeOrGetFlowAtI(i, optical_flow_gen=optical_flow_gen)
     dspace.flow_map = flow_from
     flow_img = flow2img(flow_from)
     dspace.last_flow_img = flow_img.copy()
@@ -89,7 +101,8 @@ def getMergedHypotheses(tr_list: list[Trajectory], time_window=20, max_space_dif
         if(type==1):
             tr_possible_next = tr.getPossibleNext2(tr_list, time_window=time_window)
         if(type == 2):
-            tr_possible_next = tr.getPossibleNext3(tr_list, DATA_ROOT+FLOWS_PATH, time_window=time_window)
+            flows_path = DATA_ROOT+FLOWS_PATH
+            tr_possible_next = tr.getPossibleNext3(tr_list, flows_path, time_window=time_window)
         all_possible_next = extendAllPossibleNext(tr, [(tr,T_INIT_S,1.0)],tr_possible_next,tr_list, type=type)
         mtr_hypotheses = mtr_hypotheses + all_possible_next
     return mtr_hypotheses
@@ -134,7 +147,8 @@ def extendAllPossibleNext(t:Trajectory, collected:list[tuple[Trajectory, float]]
         if(type==1):
             tr_possible_next = tr.getPossibleNext2(all_trs, time_window=time_window)
         if(type==2):
-            tr_possible_next = tr.getPossibleNext3(all_trs, DATA_ROOT+FLOWS_PATH, time_window=time_window)
+            flows_path = DATA_ROOT+FLOWS_PATH
+            tr_possible_next = tr.getPossibleNext3(all_trs, flows_path, time_window=time_window)
         collected.append( p ) # add it
         possible_next_trs = extendAllPossibleNext(tr, collected, tr_possible_next, all_trs, time_window=time_window)
         collected.pop() # remove it
@@ -144,7 +158,7 @@ def extendAllPossibleNext(t:Trajectory, collected:list[tuple[Trajectory, float]]
     return mtr_hypotheses
 
 
-# debug main:
+# main:
 def main():
     # INIT - get through first n frames and initiate (hopefully) strong trajectories:
     # init variables used in process
@@ -200,18 +214,38 @@ def main():
     dspace.lastFrame = frame.copy()
     dspace.map = frame
 
+        # INIT RAFT MODEL FOR OPTICAL FLOW ESTIMATION, IF NEEDED (if USE_PRECOMPUTED is set to False)
+    of: OpticalFlow = None
+    if(not USE_PRECOMPUTED):
+        # prepare model arguments:
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--model', help="restore checkpoint")
+        parser.add_argument('--small', action='store_true', help='use small model')
+        parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
+        parser.add_argument('--alternate_corr', action='store_true', help='use efficent correlation implementation')
+        args = parser.parse_args()
+        # of:OpticalFlow = OpticalFlow(args,frames_path=FRAMES_PATH, save_path=FLOW_SAVE_PATH)
+        FLOWS_PATH = "flow_est/LaSOT_bird-2_1/computed/" # za zihr
+        of = OpticalFlow(args,frames_path=(DATA_ROOT+FRAMES_PATH), save_path=(DATA_ROOT+FLOWS_PATH))
+        # END INIT RAFT
+
     # set flow map
-    flow = getFlowAtI(t_global, DATA_ROOT+FLOWS_PATH)
+    # flow = getFlowAtI(t_global, DATA_ROOT+FLOWS_PATH)
+    flow = computeOrGetFlowAtI(t_global, of)
     flow_img = flow2img(flow)
     dspace.flow_map = flow
     dspace.last_flow_img = flow_img.copy()
     dspace.flow_img = flow_img
     
-    print("init dspace: ", dspace.D)
+    print("init dspace: ")
     D13_init = D13[t_global] # init with those from current time step
     dspace.D.append(D13_init)
+    print(dspace.D)
     t_global = t_global+1
+    n_res = n_res-1 # there is one frame less - [FIX]
     # END INIT DSPACE
+
+    
     
     # INIT TRAJECTORIES
     for d in D13_init:
@@ -233,11 +267,11 @@ def main():
         for i in range(n_res):
             print("[@"+str(t_global)+"] \/\/\/\/\/\/\/\/")
             
-            # 1. init new frame:
+            # 1. init new frame (also compute flow, if needed):
             next_dets=D13[t_global]
             print("next dets: ",next_dets)
             dspace.D.append(next_dets)
-            setFrameFlowAtI(dspace,t_global)
+            setFrameFlowAtI(dspace,t_global, of)
             # ---
 
             # 2. extend trajectories
@@ -374,18 +408,20 @@ def main():
                 v = res[0]
                 
                 # SHOW SELECTED:
-                selected_merged = []
+                selected_merged:list[Trajectory] = []
                 dspace.clearSpace()
                 for i in range(len(v)):
                     if(v[i] == 1):
-                        selected_merged.append(merged_merged[i])
-                        merged_merged[i].drawToSpace()
-                        print("t%d"%(merged_merged[i].id), end=", ")
+                        merged_at_i = merged_merged[i]
+                        if(not (merged_at_i.term and len(merged_at_i.T2.keys()) == 1)):
+                            selected_merged.append(merged_at_i)
+                            # merged_merged[i].drawToSpace()
+                            print("t%d"%(merged_merged[i].id), end=", ")
                 print()
 
                 i_t = 0
                 for t in selected_merged:
-                    print("%3d. t%-5s o=[%-3d,%-3d], c=%-3d, len=%-4d, score=%9.4f %5d - %-5d (fin:%s)" % (i_t,t.id, t.origin.x[0],t.origin.x[1], t.color[2], len(t.X), t.getScore2(), t.X[0].t, t.X[-1].t, str(t.term)))
+                    print("%3d. t%-5s o=[%-3d,%-3d], c=%-3d, len=%-4d, score=%9.4f %5d - %-5d, n_merged=%3d (fin:%s)" % (i_t,t.id, t.origin.x[0],t.origin.x[1], t.color[2], len(t.X), t.getScore2(), t.X[0].t, t.X[-1].t, len(t.T2.keys()), str(t.term)))
                     i_t = i_t+1
 
                 # 7.5. use new trajectories in next round
@@ -397,6 +433,13 @@ def main():
                 
                 d2_winname = "merged"
                 cv.namedWindow(d2_winname, cv.WINDOW_NORMAL)
+                for t in selected_merged:
+                    t.drawToSpace()
+                    print("t"+str(t.id))
+                    dspace.showSpace(draw_dets=DRAW_DETS, draw_last_dets_bb=False, dspace_winname=d2_winname)
+                    dspace.clearSpace()
+                for t in selected_merged:
+                    t.drawToSpace()
                 dspace.showSpace(draw_dets=DRAW_DETS, draw_last_dets_bb=False, dspace_winname=d2_winname)
                 sslm = 0
             # ---
@@ -421,7 +464,7 @@ def main():
         
     # END EXTEND
 
-# main:
+# debug main:
 def main_d():
     print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
 

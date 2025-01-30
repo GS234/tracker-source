@@ -102,6 +102,7 @@ class Trajectory:
         t_ret.holes_ref = self.holes_ref
         t_ret.not_selected_strike = self.not_selected_strike
         t_ret.color = self.color
+        t_ret.term = self.term # also this?
         
         # things to deepcopy (do we really need to deepcopy this?)
 

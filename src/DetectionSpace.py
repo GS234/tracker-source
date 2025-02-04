@@ -16,7 +16,7 @@ GREEN = [0,255,0]
 EXIT_ZONE_OFFSET = 5
 
 class DetectionSpace:
-    def __init__(self, h,w, D: list = None, time_offset = 0):
+    def __init__(self, h,w, D: list = None, time_offset = 0, show_flow=True, disable_vis=False):
         self.s1, self.s2 = S1, S2 # so uncivilized, but necessary
         self.FLOW_PATH = "" # init flow path (WARN: not using DATA_ROOT variable; should provide full path) (used by connect points in Trajectory class (through dspace object pointer))
 
@@ -29,7 +29,7 @@ class DetectionSpace:
         
         self.flow_map = np.zeros((h,w,2)).astype(np.uint8) # optical flow (outta this frame)
         self.flow_to = np.zeros((h,w,2)).astype(np.uint8) # optical flow (into this frame (last flow_map))
-        self.use_flow = True # flag: use optical (also show it)
+        self.show_flow = show_flow # flag: also show optic flow
         
         self.exit_zone = EXIT_ZONE_OFFSET # offset from edge
         self.hw = (h,w) # map size (dimensions)
@@ -41,17 +41,21 @@ class DetectionSpace:
             self.D.append(D) # append detections at time t = 0
 
         # cv specific: larger window than only cv.imshow
-        self.dspace_winname = "detection space"
-        self.flow_winname = self.dspace_winname+" - optical flow"
-        cv.namedWindow(self.flow_winname, cv.WINDOW_NORMAL)
-        cv.namedWindow(self.dspace_winname, cv.WINDOW_NORMAL)
-
         print(self.hw)
-        scale_f = 1.5
-        winsize = ((np.array(self.hw)+np.array([40,0]))*scale_f).astype(np.int32)
-        cv.resizeWindow(self.dspace_winname, winsize[1],winsize[0])
-        cv.resizeWindow(self.flow_winname, winsize[1],winsize[0])
-        # 
+        self.disable_vis = disable_vis # to disable visualization (to run on a server without graphic output)
+        if(not self.disable_vis):
+            scale_f = 1.5
+            winsize = ((np.array(self.hw)+np.array([40,0]))*scale_f).astype(np.int32)
+            # dspace - main window
+            self.dspace_winname = "detection space"
+            cv.namedWindow(self.dspace_winname, cv.WINDOW_NORMAL)
+            cv.resizeWindow(self.dspace_winname, winsize[1],winsize[0])
+
+            # flow
+            if(self.show_flow):
+                self.flow_winname = self.dspace_winname+" - optical flow"
+                cv.namedWindow(self.flow_winname, cv.WINDOW_NORMAL)
+                cv.resizeWindow(self.flow_winname, winsize[1],winsize[0])
     
     
     # detection-specific methods (MIGHT NEED TO MOVE THEM ELSEWHERE [TODO: consider doing so!])
@@ -158,18 +162,19 @@ class DetectionSpace:
         return color_model_prob
 
     # method checks if detection entered exit zone
-    # TEST IT
     def isInExitZone(self, d:Detection):
-        x = d.x[0]
-        y = d.x[1]
-        return ((x < EXIT_ZONE_OFFSET) or (x > self.hw[0]-EXIT_ZONE_OFFSET) or (y < EXIT_ZONE_OFFSET) or (y > self.hw[1]-EXIT_ZONE_OFFSET))
+        x = d.x[0] # increases horizontally (w)
+        y = d.x[1] # increases vertically (h)
+        return ((x <= EXIT_ZONE_OFFSET) or (x >= self.hw[1]-EXIT_ZONE_OFFSET) or (y <= EXIT_ZONE_OFFSET) or (y >= self.hw[0]-EXIT_ZONE_OFFSET))
     # ----------------------------------------------------------------------------------------
 
     def showSpace(self, det_color=[0,0,0], draw_dets=True, draw_last_dets_bb=True, dspace_winname=None):
+        if(self.disable_vis):
+            return
         # draw exit zone (border)
         off = self.exit_zone
         exit_zone_color=[100,100,100]
-        ul,bl,ur,br = (off,off),(off,self.hw[0]-off),(self.hw[1]-off, off),(self.hw[1]-off, self.hw[0]-off)
+        ul,bl,ur,br = (off,off),(off,self.hw[0]-off-1),(self.hw[1]-off-1, off),(self.hw[1]-off-1, self.hw[0]-off+1-1) # +1? because if this is not added, rectangle is one px short
         ul,bl,ur,br = np.array(ul),np.array(bl),np.array(ur),np.array(br)
         drawLine(self.map, ul,bl,color=exit_zone_color)
         drawLine(self.map, ul,ur,color=exit_zone_color)
@@ -191,7 +196,7 @@ class DetectionSpace:
                 for d in last_dets: # draw bounding boxes around last detections
                     drawBoundingBox(self.map, d.bb)
                     drawX(self.map, d.x)
-                    if(self.use_flow):
+                    if(self.show_flow):
                         drawBoundingBox(self.flow_img, d.bb)
                         drawX(self.flow_img, d.x)
                         # draw also line in which direction is region moving
@@ -207,9 +212,25 @@ class DetectionSpace:
         # print(self.map)
         # scale_f = 1.5
         # winsize = (np.array(self.hw) * scale_f).astype(np.int32)
-        if(self.use_flow):
+        if(self.show_flow):
             cv.imshow(self.flow_winname, self.flow_img)
         # cv.imshow(self.dspace_winname, self.map)
+
+        # test of method exited:
+        # for i in range(10):
+        #       x = [i,10]
+        #     # x = [10,i]
+        #     # x = [i+469,10]
+        #     # x = [469,i+349]
+        #     # x = [474,i+349]
+        #     d:Detection = Detection(x,0)
+        #     c=[0,255,0]
+        #     if(self.isInExitZone(d)):
+        #         c = [0,0,255]
+            
+        #     drawDot(self.map, x, c)
+
+
         cv.imshow(dspace_winname, self.map)
         cv.waitKey(0)
         # while cv.getWindowProperty(self.window_name, cv.WND_PROP_VISIBLE) >= 1:
@@ -579,12 +600,12 @@ class DetectionSpace:
     
     # method builds trajectory interatction matrix
     def buildQBPMatrix3(self, tr_list: list[Trajectory]):
-        print("this is build QBP 3")
+        # print("this is build QBP 3")
         return self.buildQBPMatrixX(tr_list, type=1)
     
     # method builds trajectory interatction matrix
     def buildQBPMatrixX(self, tr_list: list[Trajectory], type=1):
-        print("this is build QBP")
+        # print("this is build QBP")
         # 1. calculate q_ii terms ("merit terms")
         Q_ii = [] # list of q_ii (trajectory scores, "merit terms")
         for tr in tr_list:
@@ -720,8 +741,8 @@ class DetectionSpace:
                 V[v_i] = 0
             n_iter += 1
         
-        
-        print("n_iter: " + str(n_iter), " n_combinations: ", (1 << n_el)) # some stats
+        if(debug):
+            print("n_iter: " + str(n_iter), " n_combinations: ", (1 << n_el)) # some stats
         # return (v_max, D_max)
         return (local_max_v, local_max_d)
     

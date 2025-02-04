@@ -13,3 +13,6 @@ src/*.p
 src/Q.txt
 src/q.txt
 src/abcde
+src/cmdout*.txt
+src/results.txt
+src/tracker

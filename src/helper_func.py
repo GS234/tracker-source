@@ -6,6 +6,8 @@ import pickle
 from matplotlib import pyplot as plt
 import math
 import traceback
+import os
+import glob
 
 import sys
 sys.path.append('../RAFT/core') # raft stuff
@@ -132,20 +134,22 @@ def readDetFile(filename: str):
             # print()
     return detections
 
-# like ^ (readDetFile), this one returns detections instead of tuples (might need to offset it with +1)
-def readDetFile2(filename: str):
+# like ^ (readDetFile), this one returns detections instead of tuples (might need to offset it with +1 -> yes)
+def readDetFile2(filename: str, time_off=1):
     detections = []
     with open(filename) as fd:
-        frame_i = 0
+        frame_i = 0 + time_off
         for line in fd: # line represents frame at i (frame_i) - STARTS WITH 0
             dets = line[0:-1].split(";")
             a = []
             for d in dets:
                 d_split = d.split(',')
-                if(d_split[0]):
+                # if(d_split[0]):
+                if(len(d_split) == 4): # if length is divisible
                     # print(d_split)
                     # bb = [int(float(i)) for i in d.split(',')]
-                    bb = [float(i) for i in d.split(',')] # now it is float
+                    # bb = [float(i) for i in d.split(',')] # now it is float
+                    bb = [float(i) for i in d_split] # now it is float
                     detection = bbDet2Det(bb, frame_i)
                     a.append(detection)
             detections.append(a)
@@ -197,10 +201,11 @@ def getFlowAtI(i, path):
 
 def getFlowToI(i, path):
     try:
-        flow_to = getFlowAtI(i-1, path)
+        i_1 = i-1
+        flow_to = getFlowAtI(i_1, path)
         return flow_to
     except FileNotFoundError:
-        print("[WARN] File not found. Optical flow might not exist at i: ", i)
+        print("[WARN] File not found. Optical flow might not exist at i: %d. Returning blank flow."%(i_1))
         return np.zeros(np.shape(getFlowAtI(i,path)))
     except Exception:
         print("[WARN] Flow to frame at i: ",i," could not be determined due to unknown reason. More info:")
@@ -251,6 +256,19 @@ def updateDetMotionVecFromFlowMap(det: Detection, flow_map):
     flow_bb = getRect(det, flow_map)
     det.flow_vector = getMotionVec(flow_bb)
     det.has_flow_vector = True
+
+# function deletes flow files (.npy - that of numpy.save) from directory (WARNING: USE WISELY)
+def deletePrecomputedFlow(path: str, confirm=True):
+    if(confirm):
+        answer = input("[WARN] you are about to delete flow from '%s'. Do you want to continue? Y - yes, (everything else) - no: "%(path))
+        if(answer != 'Y'):
+            print("[INFO] abort delete")
+            return
+
+    files = glob.glob(path+"*.npy")
+    for f in files:
+        os.remove(f)
+
 # ------------------------------------
 
 
@@ -333,7 +351,7 @@ def readTrajectoryFile(filename: str):
 
 # bounding box deteciton to Detection - generates Detection object with coordinates of center of a bounding box
 def bbDet2Det(bb: tuple, t: int = 0):
-    x, y = bb[0]+bb[2]//2,bb[1]+bb[3]//2 # (x, y swapped, because of coordinate system)
+    x, y = bb[0]+bb[2]/2,bb[1]+bb[3]/2
     return Detection([x,y], t=t, bb=bb)
 
 # function reads i-th frame

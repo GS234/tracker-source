@@ -3,7 +3,7 @@ import numpy as np
 from Detection import Detection, TDet, TDet_from_Detection
 import math
 import copy
-from helper_func import detSet2map, getTrColor, showHists, compareHists, drawX, drawO, drawDot, drawLine, drawBoundingBox, getVecMagAng, getMotionVec, getRect, getRectBb, IoU, getFlowToFromAtI,getFlowAtI, getFlowToI, vecScore # helper functions
+from helper_func import bbDet2Det, detSet2map, getTrColor, showHists, compareHists, drawX, drawO, drawDot, drawLine, drawBoundingBox, getVecMagAng, getMotionVec, getRect, getRectBb, IoU, getFlowToFromAtI,getFlowAtI, getFlowToI, vecScore # helper functions
 import cv2 as cv
 # to avoid cyclic import (detection space imports trajectory, trajectory imports detection space)
 from typing import TYPE_CHECKING
@@ -13,7 +13,9 @@ if TYPE_CHECKING:
 FLOW_WINDOW_SIZE = 10
 # EST_SCORE = 0.001 # score of estimated det (if there is no detection)
 EST_SCORE = 0.2 # score of estimated det (if there is no detection)
-DET_ADD_THR = 0.50 # threshold to add detection to trajectory
+# DET_ADD_THR = 0.50 # threshold to add detection to trajectory
+# DET_ADD_THR = 0.35
+DET_ADD_THR = 0.2
 MAX_HOLES = 10
 E2 = 0.3
 
@@ -26,7 +28,8 @@ class Trajectory:
     Tid = 0 # apparently static? (want private static, maybe should be _Tid)
 
     def __init__(self, d0: Detection, detectionSpace: DetectionSpace, color: list=None):
-        self.id = Trajectory.Tid # unique id of the trajectory
+        self.id = Trajectory.Tid # unique id of the trajectory (is used in T2 dicts)
+        self.not_so_much_unique_id = self.id # this one is used to determine trajectory identity (of object - gets propagated at merging)
         Trajectory.Tid = Trajectory.Tid+1
         self.detectionSpace = detectionSpace # pointer to detection space in which trajectory lives (has detections)
         
@@ -43,11 +46,12 @@ class Trajectory:
         self.origin.color_hist = d0.color_hist
         # ---
 
-        self.D: set[Detection] = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty)
+        self.D: set[Detection] = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty) (kinda redundant, D2 is used mostly)
         
         self.D2: dict[Detection, float] = {} # 'new' scores
         self.T2: dict[Trajectory, float] = {} # trajectory -> merge score (these scores are added when merging trajectories)
         self.X: TDet = [ ] # trajectory points ("trajectory" detections)
+        self.F: dict[int, list[Detection]] = {} # dictionary: used to store points where trajectory forked (used mostly at the end of tracking)
         self.scores: list[float] = [] # scores of detections (relative to estimate; H_t -> score of trajectory point) (kinda redundant, D2 is used mostly)
         
         self.S = 0 # score/support of the trajectory - getScore
@@ -103,17 +107,21 @@ class Trajectory:
         t_ret.not_selected_strike = self.not_selected_strike
         t_ret.color = self.color
         t_ret.term = self.term # also this?
+        # also not so much unique id?
+        t_ret.not_so_much_unique_id = self.not_so_much_unique_id
         
         # things to deepcopy (do we really need to deepcopy this?)
-
+        
         if(deep):
             t_ret.D = copy.deepcopy(self.D)
             t_ret.D2 = copy.deepcopy(self.D2)
             t_ret.X = copy.deepcopy(self.X)
+            t_ret.F = copy.deepcopy(self.F)
         else:
             t_ret.D = copy.copy(self.D)
             t_ret.D2 = copy.copy(self.D2)
             t_ret.X = copy.copy(self.X)
+            t_ret.F = copy.copy(self.F)
         
 
         return t_ret
@@ -699,7 +707,7 @@ class Trajectory:
         # collectWithin2:
         next_dets, next_probs = self.detectionSpace.collectWithin2(td_next.t, td_next)
 
-        print("this is det probs: ", next_probs)
+        # print("this is det probs: ", next_probs)
 
         bb_color = [0,255,255]
         # print("self.id: ",self.id)
@@ -715,8 +723,9 @@ class Trajectory:
 
         n_dets = len(next_dets)
         used_dets: set[Detection] = set()
-        next_tr: list[Trajectory] = list()
-        if(n_dets > 0): # we have detections: first: continue this one, every else: copy&add
+        next_tr: list[Trajectory] = list() # is used to collect forks
+        # next_tr_origins: set[Detection] = set()
+        if(n_dets > 0): # we have detections: first: continue this one, every else: copy&add (fork)
             this_current = self.getCopy(deep=False) # current trajectory
             i2 = 0 # secondary i - to determine if add to current or copy&add (and also allow using threshold)
 
@@ -741,6 +750,7 @@ class Trajectory:
                         next_t.X.append(next_tdet)
                         next_t.D2[d_i]=d_i_prob # also add score to trajectory
                         next_tr.append(next_t)
+                        # next_tr_origins.add()
                     
                     i2 = i2+1 # increase if deteciton is appended
             if(i2 == 0): # it means that no detection has been added, so continue current trajectory with estimate
@@ -928,7 +938,7 @@ class Trajectory:
                     possibleNext.append(t)
         return possibleNext
     
-    # method returns list of possible next trajectories, but instead of space difference, it uses extrapolated bb and iou with first bb of possible next trajectory
+    # method returns list of possible next trajectories, but instead of space difference, it uses extrapolated bb and iou of previous with first bb of possible next trajectory
     # it also returns iou-s for each connection
     def getPossibleNext2(self, tr_list, n_prev=5, n_ext=5, time_window=20):
         possibleNext = []
@@ -961,8 +971,8 @@ class Trajectory:
                 # drawLine(self.detectionSpace.map, detB_x, first_lastX.x)
                 # drawLine(self.detectionSpace.map, second_firstX.x, detF_x)
                 nextBb_x = (np.array(this_bb[0:2])+np.array(this_bb[2:])/2)
-                v1 = np.array(second_firstX.x)-nextBb_x
-                v2 = np.array([0,0])
+                # v1 = np.array(second_firstX.x)-nextBb_x
+                # v2 = np.array([0,0])
                 # vec_score = vecScore(v1,v2)
                 vec_score=1.0
                 # print("vec_score: ",vec_score)
@@ -970,7 +980,23 @@ class Trajectory:
 
                 if(not math.isclose(this_other_iou, 0)):
                     # print(this_other_iou)
-                    possibleNext.append((t, this_other_iou, vec_score))
+                    ext_tdets = [] # extrapolated frames
+                    bb_ext = this_bb.copy()
+                    v = np.array(bb_ext[0:2]) - np.array(first_lastX.bb[0:2])
+                    step = np.array([0,0])
+                    if(time_diff != 0):
+                        step = v/time_diff
+                    # also extrapolate frames
+                    for i in range(time_diff):
+                        # next_bb = bb_ext
+                        bb_next = first_lastX.bb.copy()
+                        bb_next[0:2] = np.array(bb_next[0:2])+step
+                        next_det = bbDet2Det(bb_next, first_lastX.t+i+1)
+                        next_tdet = TDet_from_Detection(next_det)
+                        ext_tdets.append(next_tdet)
+                    ext_tdets = ext_tdets[0:-1]
+
+                    possibleNext.append((t, this_other_iou, vec_score, ext_tdets))
                 
         return possibleNext
 
@@ -997,17 +1023,25 @@ class Trajectory:
         for d in last_n:
             last_n_x.append(d.x[0])
             last_n_y.append(d.x[1])
-        poly = np.polynomial.Polynomial.fit(x=last_n_x,y=last_n_y,deg=1)
         
         # 1. get avg vector:
         len_last_n = len(last_n)
-        x_dash = ( np.array(last_n[-1].x) -np.array(last_n[0].x)) / len_last_n
+        x_dash = ( np.array(last_n[-1].x) -np.array(last_n[0].x)) / len_last_n # vector spanning from first to last point
         
         # 2. project it to line vector:
         # 2.1 get line vector:
         x = np.array([0,10])
-        y = poly(x)
-        diff = np.array([x[-1], y[-1]]) - np.array([x[0], y[0]])
+        
+        diff = [0,0] # 'pythonic way of declaring variables' (FUJ)
+        try:
+            poly = np.polynomial.Polynomial.fit(x=last_n_x,y=last_n_y,deg=1)
+            y = poly(x)
+            diff = np.array([x[-1], y[-1]]) - np.array([x[0], y[0]])
+        except np.linalg.LinAlgError:
+            print("[WARN] could not fit polynomial. Displacement might be vertical, using base vector [0,1]")
+            diff = [0,1]
+        
+        
         diff_len = np.sqrt(np.dot(diff,diff))
         v = np.array([0,0]) # is zero, if length is zero
         if(not math.isclose(diff_len,0)):
@@ -1061,10 +1095,14 @@ class Trajectory:
                 # drawX(self.detectionSpace.map, np.array(detF.bb[0:2])+np.array(detF.bb[2:])/2, [54,181,255])
                 # drawX(self.detectionSpace.map, np.array(detB.bb[0:2])+np.array(detB.bb[2:])/2, [26,62,240])
                 
-                
+                ext_tdets= [] # extrapolated bounding boxes
                 for i in range(time_diff+1):
                     next_bb = self.getNextBbIII(detF, detF.t+i, flow_path=flow_path)
                     prev_bb = self.getNextBbIII(detB, detB.t-i+1, flow_path=flow_path, forward=False)
+
+                    next_det = bbDet2Det(next_bb.copy(), first_lastX.t+i+1)
+                    ext_tdets.append(TDet_from_Detection(next_det))
+
                     # debug draw
                     # drawBoundingBox(self.detectionSpace.map, next_bb)
                     # drawDot(self.detectionSpace.map, np.array(next_bb[0:2])+np.array(next_bb[2:])/2, [54,181,255])
@@ -1072,6 +1110,7 @@ class Trajectory:
                     # self.detectionSpace.showSpace(dspace_winname="dspace_win2")
                     detF.bb = next_bb
                     detB.bb = prev_bb
+                ext_tdets = ext_tdets[0:-2]
                 # self.detectionSpace.showSpace(dspace_winname="dspace_win2", draw_dets=False, draw_last_dets_bb=False)
                 
                 detF_x = np.array(detF.bb[0:2])+np.array(detF.bb[2:])/2
@@ -1093,7 +1132,7 @@ class Trajectory:
                 # if(True):
                     # print("t%d - t%d, time diff:%d, IoU->:%6.2f, IoU<-:%6.2f, vecs=%6.2f"%(first.id, second.id, time_diff, this_other_iou, other_this_iou, vec_score))
                     # print(this_other_iou)
-                    possibleNext.append((t, this_other_iou,vec_score))
+                    possibleNext.append((t, this_other_iou,vec_score, ext_tdets))
         return possibleNext
     
     # method gets next bounding box using optical flow
@@ -1122,10 +1161,15 @@ class Trajectory:
     # [END NEW METHODS] ------------------------------
     
     # returns string with bounding boxes
-    def tr2bbStr(self):
+    # n_pad: for missing frames
+    def tr2bbStr(self, n_all: int=0):
         ret_str = ""
         for td in self.X:
-            ret_str = ret_str + "[%f,%f,%f,%f]"%(td.bb[0],td.bb[1],td.bb[2],td.bb[3]) + "\n"
+            ret_str = ret_str + "%6.2f,%6.2f,%6.2f,%6.2f\n"%(td.bb[0],td.bb[1],td.bb[2],td.bb[3])
+        # pad missing:
+        for i in range(n_all-len(self.X)+1):
+            td = self.X[-1]
+            ret_str = ret_str + "%6.2f,%6.2f,%6.2f,%6.2f\n"%(td.bb[0],td.bb[1],td.bb[2],td.bb[3])
         return ret_str
 
     

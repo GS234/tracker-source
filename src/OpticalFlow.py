@@ -25,7 +25,7 @@ DATA_ROOT = '../data/'
 ESTIMATES_ROOT = 'estimates/'
 FRAMES_PATH = '../data/frames/LaSOT_bird-2/color/'
 DEVICE = 'cuda'
-CALCULATE_FLOW = True
+CALCULATE_FLOW = not True
 MODEL = "../RAFT/models/raft-things.pth"
 BLANK_FLOW = True
 
@@ -60,7 +60,6 @@ class OpticalFlow:
         print("[FLOW] init done") #, carry on
 
     # method computes optical flow between image at i and i+1
-    # note: there is no check for file existence, this should be done before method call
     def computeFlowAtI(self, i):
         with torch.no_grad():
             # get images
@@ -70,7 +69,17 @@ class OpticalFlow:
             # images = [cv.imread(path + image_i+'.jpg',cv.COLOR_RGB2BGR), cv.imread(path + image_ii+'.jpg',cv.COLOR_RGB2BGR)]
             
             image1 = load_image(path+image_i+'.jpg')
-            image2 = load_image(path+image_ii+'.jpg')
+            try:
+                image2 = load_image(path+image_ii+'.jpg')
+            except FileNotFoundError:
+                print("[WARN] could not load second frame (at i %d). Possibly end of sequence reached. Returning blank flow."%(i+1))
+                image_i1 = i2frameI(i)
+                shape = tuple(np.shape(image1)[-2:])
+                shape =(*shape,2)
+                flow = np.zeros(shape)
+                if(self.save_flow):
+                    np.save(self.save_path+image_i1+'.npy', flow) # save as nnnnnnnn.npy (numpy matrix)
+                return flow
             
             padder = InputPadder(image1.shape) # pad image to dimensions required by raft model
             image1, image2 = padder.pad(image1, image2)
@@ -126,18 +135,20 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     of:OpticalFlow = OpticalFlow(args, save_path="./abcde/")
-    n = 10
+    n = 7
+    off = 4095
     if(CALCULATE_FLOW):
-        for i in range(n):
-            of.computeFlowAtITest(i+1)
+        for i in range(off,n+off):
+            # of.computeFlowAtITest(i)
+            of.computeFlowAtI(i)
             
     
     # vizualize:
     FLOW_PATH2 = "../data/flow_est/LaSOT_bird-2_1/"
     FLOW_PATH3 = "./abcde/"
-    for i in range(0,n):
+    for i in range(off,n+off):
         # flow = getFlowAtI(i)
-        frame = getFrameAtI(i+1,FRAMES_PATH)
+        frame = getFrameAtI(i,FRAMES_PATH)
         flow_in1, flow_out1 = getFlowToFromAtI(i, FLOW_PATH2)
         flow_in2, flow_out2 = getFlowToFromAtI(i, FLOW_PATH3)
         flow_in_im1 = flow2img(flow_in1)

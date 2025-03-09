@@ -3,7 +3,7 @@ import numpy as np
 from Detection import Detection, TDet, TDet_from_Detection
 import math
 import copy
-from helper_func import bbDet2Det, detSet2map, getTrColor, showHists, compareHists, drawX, drawO, drawDot, drawLine, drawBoundingBox, getVecMagAng, getMotionVec, getRect, getRectBb, IoU, getFlowToFromAtI,getFlowAtI, getFlowToI, vecScore # helper functions
+from helper_func import bbDet2Det, bb2str, detSet2map, getTrColor, drawX, drawO, drawDot, drawLine, drawBoundingBox, getVecMagAng, getMotionVec, getRect, getRectBb, IoU, getFlowToFromAtI,getFlowAtI, getFlowToI, vecScore, getFeaturesFromFeatureMapAndPadding, addToAvgTr, add2AvgTr # helper functions
 import cv2 as cv
 # to avoid cyclic import (detection space imports trajectory, trajectory imports detection space)
 from typing import TYPE_CHECKING
@@ -50,25 +50,30 @@ class Trajectory:
         
         self.D2: dict[Detection, float] = {} # 'new' scores
         self.T2: dict[Trajectory, float] = {} # trajectory -> merge score (these scores are added when merging trajectories)
-        self.X: TDet = [ ] # trajectory points ("trajectory" detections)
+        self.X: list[TDet] = [ ] # trajectory points ("trajectory" detections)
         self.F: dict[int, list[Detection]] = {} # dictionary: used to store points where trajectory forked (used mostly at the end of tracking)
         self.scores: list[float] = [] # scores of detections (relative to estimate; H_t -> score of trajectory point) (kinda redundant, D2 is used mostly)
         
         self.S = 0 # score/support of the trajectory - getScore
         self.holes = 0 # counter: how many trajectory points have been added considering only estimate of next detection
         
-        # pruning variables, signals:
+        # pruning variables, signals (old stuff, prob. redundant):
         self.holes_ref = 0 # holes reference: used to calculate relative number of holes (set to self.holes first, then calculate difference) (used in extend)
         self.not_selected_strike = 0 # number of times the trajectory has not been selected but is in hypothesis set
         self.disable_grow = False # flag: disable trajectory to grow (if not selected for a while)
 
-        self.possibly_occluded = False # if this is true, trajectory should be extended by e1Nc instead of extend
-        self.possible_next: list[Trajectory] = [] # this is list of trajectories that are possible after this one got occluded
+        # self.possibly_occluded = False # if this is true, trajectory should be extended by e1Nc instead of extend
+        # self.possible_next: list[Trajectory] = [] # this is list of trajectories that are possible after this one got occluded
+        
+        # we store visual features here
+        self.visual_avg = None # average look
+        self.visual_n = 0 # number of added to average
+        
 
         # new things:
         self.term = False
         self.exited = False # true if entered exit zone
-
+        
         # -----------------
     
     # draw it:
@@ -96,9 +101,9 @@ class Trajectory:
         if(len(self.X) > 0): # if has one
             drawO(self.detectionSpace.map, self.X[0].x, x_color) # start
     
-    # method returns copy of this trajectory
+    # method returns copy of this trajectory (should also copy appearance)
     def getCopy(self, deep=True) -> Trajectory:
-        t_ret = Trajectory(self.origin, self.detectionSpace)
+        t_ret = Trajectory(self.origin, self.detectionSpace) # origin is set here
         
         # things to not deepcopy
         t_ret.S = self.S
@@ -109,6 +114,9 @@ class Trajectory:
         t_ret.term = self.term # also this?
         # also not so much unique id?
         t_ret.not_so_much_unique_id = self.not_so_much_unique_id
+
+        t_ret.visual_avg = copy.copy(self.visual_avg)
+        t_ret.visual_n = self.visual_n
         
         # things to deepcopy (do we really need to deepcopy this?)
         
@@ -138,6 +146,9 @@ class Trajectory:
         bb = td_current.bb
         flow_region = getRectBb(bb, self.detectionSpace.flow_map)
         flow_vec2 = (getMotionVec(flow_region))
+        if(flow_vec2 is None):
+            print("[WARN] motion vec could not be determined, using [0,0]")
+            flow_vec2 = np.array([0,0])
         disp_vec = flow_vec2*dt
         # drawBoundingBox(self.detectionSpace.map, bb, [0,255,255])
 
@@ -381,8 +392,8 @@ class Trajectory:
         
         # debug info:
         print("[e1Nc] next dets: ",next_dets, next_probs)
-        for d in next_dets:
-            print("comparing: ", d, td_current, ": ", compareHists(d.color_hist, td_current.color_hist))
+        # for d in next_dets:
+        #     print("comparing: ", d, td_current, ": ", compareHists(d.color_hist, td_current.color_hist))
         # hists = [td_current.color_hist]
         # for d in next_dets:
         #     print("det:",d)
@@ -414,11 +425,11 @@ class Trajectory:
                 # 3. estimate next detection: weighted mean of detections
                 d = next_dets[i]
                 dp = next_probs[i]
-                td_possible_next, _ = self.detectionSpace.estimateNext2(td_current, td_pred, [d], [dp], dt=dt)
+                td_visual_n, _ = self.detectionSpace.estimateNext2(td_current, td_pred, [d], [dp], dt=dt)
                 
                 # 4. extend: add used detection to D, add new TDet to X
                 t_possible.D.add(d)
-                t_possible.X.append(td_possible_next)
+                t_possible.X.append(td_visual_n)
                 possible_tr.append(t_possible)
         
         # might not need to add it (because)
@@ -696,10 +707,16 @@ class Trajectory:
     # [NEW METHODS]:
 
     # new main extend method
-    # some refactoring is prob needed
-    def extend4(self, det_add_thr=DET_ADD_THR, add_est=False, debug=False) -> tuple[set[Detection],list[Trajectory]]:
+    # some refactoring is prob needed (not very dry)
+    # feature_map_and_padding: (feature_map, pad_l, pad_u) -> we need all this
+    def extend4(self, det_add_thr=DET_ADD_THR, add_est=False, debug=False, feature_map_and_featExt=None) -> tuple[set[Detection],list[Trajectory]]:
         if(self.term):
             return (set(),[self])
+        
+        use_features = True
+        if(feature_map_and_featExt is None):
+            use_features = False
+        
         td_current: TDet = self.X[-1] # current tdet (last trajectory point)
         # print("current of t"+str(self.id)+": ",td_current, self.X)
         td_next: TDet = self.estimateNextUsingFlow(td_current)
@@ -743,7 +760,11 @@ class Trajectory:
                         self.X.append(next_tdet)
                         self.D.add(d_i)
                         self.D2[d_i]=d_i_prob # also add score to trajectory
-                        
+                        if(use_features):
+                            # get patches: getPatchesInBB + roiPool (in helper func)
+                            patches = getFeaturesFromFeatureMapAndPadding(d_i,feature_map_and_featExt)
+                            addToAvgTr(patches, self)
+
                     else:
                         next_t = this_current.getCopy(deep=False)
                         print("[!] FORKING t"+str(self.id)+" INTO t"+str(next_t.id), "(iou: ",d_i_prob," )")
@@ -751,19 +772,29 @@ class Trajectory:
                         next_t.D2[d_i]=d_i_prob # also add score to trajectory
                         next_tr.append(next_t)
                         # next_tr_origins.add()
+                        if(use_features): # same as before, just add it to next_t instead of self
+                            patches = getFeaturesFromFeatureMapAndPadding(d_i,feature_map_and_featExt)
+                            addToAvgTr(patches, next_t)
                     
                     i2 = i2+1 # increase if deteciton is appended
             if(i2 == 0): # it means that no detection has been added, so continue current trajectory with estimate
                 self.holes_ref = self.holes_ref + 1
                 self.X.append(td_next)
                 self.D2[td_next]=EST_SCORE
+                if(use_features): # same as before, just use estimate instead of actual detection
+                    patches = getFeaturesFromFeatureMapAndPadding(td_next,feature_map_and_featExt)
+                    addToAvgTr(patches, self)
             # elif(add_est): # add one additional trajectory: one that is continued with estimate
             #     next_tr.append(t_estimated)
                 
-        else:
+        else: # continue current trajectory with estimate, if there are no next detections
             self.holes_ref = self.holes_ref + 1
             self.X.append(td_next) # continue current, with estimate
             self.D2[td_next]=EST_SCORE # as detection add estimate
+            if(use_features): # same as before, just use estimate instead of actual detection
+                patches = getFeaturesFromFeatureMapAndPadding(td_next,feature_map_and_featExt)
+                addToAvgTr(patches, self)
+
         return (used_dets, next_tr)
     
     # testing/debug method - extend trajectory with optical flow only
@@ -806,6 +837,7 @@ class Trajectory:
 
     # I. qbp1:
     # method calculates score of trajectory (simply sum of all detecion scores)
+    # detection-wise
     def getScore2(self):
         return sum(self.D2.values())
     
@@ -851,6 +883,7 @@ class Trajectory:
     
 
     # II. qbp2: connecting trajectories
+    # trajectory-wise
     def getScoreII(self):
         score = 0.0
         # score=self.getScore2()
@@ -941,9 +974,10 @@ class Trajectory:
     # method returns list of possible next trajectories, but instead of space difference, it uses extrapolated bb and iou of previous with first bb of possible next trajectory
     # it also returns iou-s for each connection
     def getPossibleNext2(self, tr_list, n_prev=5, n_ext=5, time_window=20):
+        print("this is getpossiblenext2")
         possibleNext = []
         # this_bb = self.getNextBbII(n_prev, n_ext)
-        for t in tr_list:
+        for t in tr_list: # all trs
             # skip this one
             if(t == self):
                 continue
@@ -956,6 +990,7 @@ class Trajectory:
             second_firstX:TDet = second.X[0]
             # second_lastX = second.X[-1]
             time_diff = second_firstX.t-first_lastX.t
+            # there are trajectories which have only one time (they might get stuck in recursion - test it)
             if(time_diff >= 0 and ((time_diff < time_window))):
                 # get iou, if it is not 0, add to possible next
                 # create virtual detection with bb (IoU accepts only detections)
@@ -1066,8 +1101,10 @@ class Trajectory:
 
     # III. other trajectories: connect with flow
     def getPossibleNext3(self, tr_list, flow_path, time_window=20, max_iou_diff=0.02, iou_thresh=0.1):
+        print("this is getPossibleNext3")
         possibleNext = []
         for t in tr_list:
+            # print(t)
             # t = tr_list[1]
             # skip this one
             if(t == self):
@@ -1096,22 +1133,39 @@ class Trajectory:
                 # drawX(self.detectionSpace.map, np.array(detB.bb[0:2])+np.array(detB.bb[2:])/2, [26,62,240])
                 
                 ext_tdets= [] # extrapolated bounding boxes
+                if(self.exited):
+                    print("this tr is exited")
+                # print(time_diff)
+                skip_this = False
                 for i in range(time_diff+1):
                     next_bb = self.getNextBbIII(detF, detF.t+i, flow_path=flow_path)
                     prev_bb = self.getNextBbIII(detB, detB.t-i+1, flow_path=flow_path, forward=False)
 
-                    next_det = bbDet2Det(next_bb.copy(), first_lastX.t+i+1)
+                    # next_bb = [1,1,1,1]
+                    # prev_bb = [1,1,1,1]
+                    
+                    # if next bb is none, we cannot continue, so skip this (if we did not skip it, it might merge with it, because iou_this_other==iou_other_this (if nothing moves, this holds))
+                    # and also there would be trajectories with holes (there would not be interpolated frames in between because of break))
+                    if(next_bb is None or prev_bb is None):
+                        print("[WARN] next_bb or prev_bb could not be determined. stopping finding next")
+                        skip_this = True
+                        break
+
+                    next_det = bbDet2Det(next_bb, first_lastX.t+i+1)
+                    # next_det = bbDet2Det(next_bb.copy(), first_lastX.t+i+1)
                     ext_tdets.append(TDet_from_Detection(next_det))
 
                     # debug draw
                     # drawBoundingBox(self.detectionSpace.map, next_bb)
                     # drawDot(self.detectionSpace.map, np.array(next_bb[0:2])+np.array(next_bb[2:])/2, [54,181,255])
                     # drawDot(self.detectionSpace.map, np.array(prev_bb[0:2])+np.array(prev_bb[2:])/2, [26,62,240])
-                    # self.detectionSpace.showSpace(dspace_winname="dspace_win2")
+                    # self.detectionSpace.showSpace(draw_dets=False, draw_last_dets_bb=False)
                     detF.bb = next_bb
                     detB.bb = prev_bb
+                if(skip_this):
+                    continue # continue outer loop on error (if bb-s could not be determined)
                 ext_tdets = ext_tdets[0:-2]
-                # self.detectionSpace.showSpace(dspace_winname="dspace_win2", draw_dets=False, draw_last_dets_bb=False)
+                # self.detectionSpace.showSpace(draw_dets=False, draw_last_dets_bb=False)
                 
                 detF_x = np.array(detF.bb[0:2])+np.array(detF.bb[2:])/2
                 detB_x = np.array(detB.bb[0:2])+np.array(detB.bb[2:])/2
@@ -1141,14 +1195,25 @@ class Trajectory:
         next_bb = d.bb.copy()
         # flow_to, flow_from = getFlowToFromAtI(t,flow_path)
         flow_vec2 = []
+        flow_region = []
         if(forward):
             flow_from = getFlowAtI(t, flow_path)
             flow_region = getRectBb(next_bb, flow_from)
-            flow_vec2 = (getMotionVec(flow_region))
+            # flow_vec2 = (getMotionVec(flow_region))    
         else:
             flow_to = getFlowToI(t, flow_path)
             flow_region = getRectBb(next_bb, flow_to)
-            flow_vec2 = -(getMotionVec(flow_region))
+            # flow_vec2 = -(getMotionVec(flow_region))
+        
+
+        flow_vec2 = (getMotionVec(flow_region))
+        if(flow_vec2 is None):
+            print("[WARN] flow vector is None, next bb could not be found")
+            return None
+        
+        if(not forward): # this is separated because it is necessary to check for none first
+            flow_vec2 = -flow_vec2
+
         next_bb[0:2] = next_bb[0:2]+flow_vec2
         return next_bb
     
@@ -1160,28 +1225,74 @@ class Trajectory:
 
     # [END NEW METHODS] ------------------------------
     
+    
+
     # returns string with bounding boxes
     # n_pad: for missing frames
-    def tr2bbStr(self, n_all: int=0):
+    def tr2bbStr(self, n_pad: int=0):
         ret_str = ""
         for td in self.X:
-            ret_str = ret_str + "%6.2f,%6.2f,%6.2f,%6.2f\n"%(td.bb[0],td.bb[1],td.bb[2],td.bb[3])
+            # ret_str = ret_str + "%6.2f,%6.2f,%6.2f,%6.2f\n"%(td.bb[0],td.bb[1],td.bb[2],td.bb[3])
+            ret_str = "%s%s\n"%(ret_str, bb2str(td.bb))
+        
         # pad missing:
-        for i in range(n_all-len(self.X)+1):
+        for i in range(n_pad-len(self.X)+1):
             td = self.X[-1]
-            ret_str = ret_str + "%6.2f,%6.2f,%6.2f,%6.2f\n"%(td.bb[0],td.bb[1],td.bb[2],td.bb[3])
+            # ret_str = ret_str + "%6.2f,%6.2f,%6.2f,%6.2f\n"%(td.bb[0],td.bb[1],td.bb[2],td.bb[3])
+            ret_str = "%s%s\n"%(ret_str, bb2str(td.bb))
         return ret_str
+    
+    def tr2bbStr2(self, n_pad: int=0, different_first_line=False):
+        n_bb = 0
+        ret_str = ""
+        # pad difference in time and length:
+        time_len_diff = (self.X[-1].t - self.X[0].t + 1) - len(self.X) # ce je vec tock k described time, potem ne vseh
+        # print(time_len_diff)
+
+        end_element = len(self.X)
+        tds = self.X
+        if(time_len_diff < 0): # if less, then trim string
+            print("[warn] t%d has more points than described time (%d)"%(self.not_so_much_unique_id, -time_len_diff))
+            # could also trim it
+            tds = self.X[0:time_len_diff]
+        
+        
+        # for td in tds:
+        for i in range(len(tds)):
+            td = tds[i]
+            # ret_str = ret_str + "%6.2f,%6.2f,%6.2f,%6.2f\n"%(td.bb[0],td.bb[1],td.bb[2],td.bb[3])
+            if(different_first_line and i == 0):
+                ret_str = "%s%d\n"%(ret_str, 1)
+            else:
+                ret_str = "%s%s\n"%(ret_str, bb2str(td.bb))
+            n_bb = n_bb +1
+        if(time_len_diff > 0):
+            n_pad = n_pad+time_len_diff
+        # pad missing:
+        ret_str = "%s%s"%(ret_str, self.lastNtimes(n_pad))
+        n_bb = n_bb + n_pad
+        return (ret_str, n_bb)
+    
+    def lastNtimes(self, n):
+        ret_str = ""
+        for i in range(n):
+            td = self.X[-1] # last bb
+            # ret_str = ret_str + "%6.2f,%6.2f,%6.2f,%6.2f\n"%(td.bb[0],td.bb[1],td.bb[2],td.bb[3])
+            ret_str = "%s%s\n"%(ret_str, bb2str(td.bb))
+        return ret_str
+
 
     
     def __str__(self):
         disabled = ""
-        possibly_occluded = ""
+        visuals = str(self.visual_avg)
         if(self.disable_grow):
             disabled = " (d)"
-        if(self.possibly_occluded):
-            possibly_occluded  = " (|?|)"
-        # return "{t"+str(self.id)+", len="+str(len(self.X))+", S="+ f"{self.S:.4f}" +disabled+possibly_occluded+", c="+str(self.color)+"}"
-        return "{t"+str(self.id)+", len="+str(len(self.X)) +disabled+possibly_occluded+", c="+str(self.color)+"}"
+        if(self.visual_avg is not None):
+            visuals = str(self.visual_n)
+        # return "{t"+str(self.id)+", len="+str(len(self.X))+", S="+ f"{self.S:.4f}" +disabled+visual_avg+", c="+str(self.color)+"}"
+        # return "{t"+str(self.id)+", len="+str(len(self.X)) +disabled+" "+str(self.visual_n)+", c="+str(self.color)+"}"
+        return "{t%d (t%d), len=%d, %s %s c=%s}"%(self.id, self.not_so_much_unique_id, len(self.X), disabled, visuals, str(self.color))
 
     def __repr__(self):
         return self.__str__()

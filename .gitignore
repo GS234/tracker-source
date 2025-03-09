@@ -16,3 +16,8 @@ src/abcde
 src/cmdout*.txt
 src/results.txt
 src/tracker
+src/Q_sorted.txt
+src/Qmat.txt
+src/options.ini
+src/src_zips
+src/src4.zip

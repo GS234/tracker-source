@@ -168,9 +168,16 @@ class DetectionSpace:
         return ((x <= EXIT_ZONE_OFFSET) or (x >= self.hw[1]-EXIT_ZONE_OFFSET) or (y <= EXIT_ZONE_OFFSET) or (y >= self.hw[0]-EXIT_ZONE_OFFSET))
     # ----------------------------------------------------------------------------------------
 
-    def showSpace(self, det_color=[0,0,0], draw_dets=True, draw_last_dets_bb=True, dspace_winname=None):
+    def showSpace(self, det_color=[0,0,0], draw_dets=True, at_time=-1, draw_last_dets_bb=True, bb_color=None, dspace_winname=None):
+        if(at_time != -1):
+            at_time = at_time-self.time_offset
+            if(at_time < 0):
+                print("[WARN] time less than 0, using 0")
+                at_time = 0
         if(self.disable_vis):
             return
+        if(bb_color is None):
+            bb_color = [0,255,0]
         # draw exit zone (border)
         off = self.exit_zone
         exit_zone_color=[100,100,100]
@@ -188,13 +195,14 @@ class DetectionSpace:
             if(draw_dets):
                 for d in self.D:
                     detections2map(d, self.map, color=det_color)
-            last_dets = self.D[-1]
+            # last_dets = self.D[-1]
+            dets_at_t = self.D[at_time]
             
             # print(last_dets)
             # print()
             if(draw_last_dets_bb):
-                for d in last_dets: # draw bounding boxes around last detections
-                    drawBoundingBox(self.map, d.bb)
+                for d in dets_at_t: # draw bounding boxes around last detections
+                    drawBoundingBox(self.map, d.bb, color=bb_color)
                     drawX(self.map, d.x)
                     if(self.show_flow):
                         drawBoundingBox(self.flow_img, d.bb)
@@ -603,43 +611,45 @@ class DetectionSpace:
         # print("this is build QBP 3")
         return self.buildQBPMatrixX(tr_list, type=1)
     
+    # !MOVED TO HELPER_FUNC!!
     # method builds trajectory interatction matrix
+    # type 1: detection-wise, type 2: trajectory-wise
     def buildQBPMatrixX(self, tr_list: list[Trajectory], type=1):
+        return buildQBPMatrixX(tr_list=tr_list, type=type) # from helper_func
         # print("this is build QBP")
         # 1. calculate q_ii terms ("merit terms")
-        Q_ii = [] # list of q_ii (trajectory scores, "merit terms")
-        for tr in tr_list:
-            # q_ii = tr.getScore2()
-            q_ii = tr.getScoreX(type=type)
-            Q_ii.append(q_ii)
+        # Q_ii = [] # list of q_ii (trajectory scores, "merit terms")
+        # for tr in tr_list:
+        #     # q_ii = tr.getScore2()
+        #     q_ii = tr.getScoreX(type=type)
+        #     Q_ii.append(q_ii)
         
-        Q = np.diag(Q_ii) # make diagonal matrix
+        # Q = np.diag(Q_ii) # make diagonal matrix
         
-        # 2. calculate q_ij terms (interaction terms (similar to q_ii, but only consider intersecting trajectory points))
-        n_tr = len(Q_ii)
-        m = 0 # row index
-        n = 0 # column index
+        # # 2. calculate q_ij terms (interaction terms (similar to q_ii, but only consider intersecting trajectory points))
+        # n_tr = len(Q_ii)
+        # m = 0 # row index
+        # n = 0 # column index
 
-        # I miss good old for loops from java so much ...
-        iii = 0
-        while( m <= (n_tr-1)):
-            n = m+1 # calculate only terms above diagonal, because Q is symmetric (Q[i,j] = Q[j,i])
-            while( n <= (n_tr -1)):
-                # 1. calculate interaction cost (points that are in intersection of both hypotheses)
-                # q_ij = tr_list[m].getInteractionCost2(tr_list[n])
-                q_ij = tr_list[m].getInteractionCostX(tr_list[n], type=type)
-                # print("t%-5d - t%-5d: %-6.2f" % (tr_list[m].id, tr_list[n].id, q_ij))
-                # 2. set q_ij term (q_ij, q_ji)
-                Q[m,n] = q_ij
-                Q[n,m] = q_ij
-                n = n+1
-                iii+=1
-            m = m+1
-        return Q
+        # # I miss good old for loops from java so much ...
+        # iii = 0
+        # while( m <= (n_tr-1)):
+        #     n = m+1 # calculate only terms above diagonal, because Q is symmetric (Q[i,j] = Q[j,i])
+        #     while( n <= (n_tr -1)):
+        #         # 1. calculate interaction cost (points that are in intersection of both hypotheses)
+        #         # q_ij = tr_list[m].getInteractionCost2(tr_list[n])
+        #         q_ij = tr_list[m].getInteractionCostX(tr_list[n], type=type)
+        #         # print("t%-5d - t%-5d: %-6.2f" % (tr_list[m].id, tr_list[n].id, q_ij))
+        #         # 2. set q_ij term (q_ij, q_ji)
+        #         Q[m,n] = q_ij
+        #         Q[n,m] = q_ij
+        #         n = n+1
+        #         iii+=1
+        #     m = m+1
+        # return Q
     
     
     # method builds interaction matrix to connect trajectories
-    # TODO
     def buildQBPMatrixII(self, tr_list: list[Trajectory]):
         return self.buildQBPMatrixX(tr_list, type=2)
         # print("this is build QBP II:")

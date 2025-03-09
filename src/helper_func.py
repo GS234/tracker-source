@@ -1,19 +1,47 @@
-from Detection import Detection
+from __future__ import annotations # da delajo tut type hint-i znotraj istega class-a
 import numpy as np
 import cv2 as cv
 import random
 import pickle
-from matplotlib import pyplot as plt
+# from matplotlib import pyplot as plt
 import math
 import traceback
 import os
 import glob
+from FeatureExtractor import roiPool, patchesInBB
+from Detection import Detection
 
 import sys
 sys.path.append('../RAFT/core') # raft stuff
-from raft import RAFT
 from utils import flow_viz
-from utils.utils import InputPadder
+
+# to avoid cyclic import; use it only in type checking
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from Trajectory import Trajectory
+
+
+def printTrWithStats(t: Trajectory, i_t=None, also_T2k=False, add_to_end = ""):
+    s = "t%-5s (t%-5s) o=[%-3d,%-3d], c=%-3d, len=%-4d, score=%9.4f %5d - %-5d, n_merged=%3d (fin:%s)" % \
+          (t.not_so_much_unique_id,t.id, t.origin.x[0],t.origin.x[1], t.color[2], len(t.X), t.getScore2(), t.X[0].t, t.X[-1].t, len(t.T2.keys()), str(t.term))
+    if(i_t is not None):
+        s = "%3d. %s"%(i_t,s)
+    
+    if(also_T2k):
+        joined = ""
+        for k in t.T2.keys():
+            joined = "%s %s"%(joined,k.id)
+        s = "%s [%s]"%(s,joined)
+    
+    s = "%s %s"%(s,str(add_to_end))
+    print(s)
+
+def printTrListWithStatsOrdered(tr_list: list[Trajectory]):
+    t_i = 0
+    for t in tr_list:
+        printTrWithStats(t, t_i)
+        t_i = t_i+1
+
 
 # takes list of tuples, returns list of detections
 def coords2detect(X):
@@ -157,6 +185,11 @@ def readDetFile2(filename: str, time_off=1):
             frame_i = frame_i + 1
     return detections
 
+def getFileAtI(i, path, ending='.npy'):
+    frame_i = f'{i:08}'
+    return np.load(path+frame_i+ending)
+
+
 # OPTICAL FLOW HELPER FUNCTIONS:
 def readFlowFile(filename: str):
     with open(filename, 'rb') as fp:
@@ -179,11 +212,13 @@ def getVecMagAng(vec):
 
 # function takes region of optical flow map and calculates displacement vector (median of all pixels within bb)
 def getMotionVec(flo_region, mean=False):
+    # print(flo_region)
     flo_reg_resh = flo_region.reshape((-1,2))
     vec=[0,0]
     if(not flo_region.any()):
-        print("[WARN] getMotionVec: flow region empty, returning ",vec)
-        return np.array(vec)
+        print("[WARN] getMotionVec: flow region empty, returning None")
+        # return np.array(vec)
+        return None
     
     if(mean):
         vec = np.mean(flo_reg_resh,axis=0)
@@ -196,8 +231,7 @@ def getMotionVec(flo_region, mean=False):
     return vec
 
 def getFlowAtI(i, path):
-    frame_i = f'{i:08}'
-    return np.load(path+frame_i+".npy")
+    return getFileAtI(i, path)
 
 def getFlowToI(i, path):
     try:
@@ -258,9 +292,9 @@ def updateDetMotionVecFromFlowMap(det: Detection, flow_map):
     det.has_flow_vector = True
 
 # function deletes flow files (.npy - that of numpy.save) from directory (WARNING: USE WISELY)
-def deletePrecomputedFlow(path: str, confirm=True):
+def deletePrecomputed(path: str, confirm=True):
     if(confirm):
-        answer = input("[WARN] you are about to delete flow from '%s'. Do you want to continue? Y - yes, (everything else) - no: "%(path))
+        answer = input("[WARN] you are about to delete precomputed files from '%s'. Do you want to continue? Y - yes, (everything else) - no: "%(path))
         if(answer != 'Y'):
             print("[INFO] abort delete")
             return
@@ -271,7 +305,29 @@ def deletePrecomputedFlow(path: str, confirm=True):
 
 # ------------------------------------
 
+# feature-related functions:
+def getFeaturesAtI(i:int, path:str):
+    return getFileAtI(i, path)
+# --------------------------
 
+def getDistBetweenDets(d1:Detection, d2:Detection):
+    diff = d1.x - d2.x
+    return np.sqrt(np.dot(diff, diff))
+
+
+# function returns rectangular region around detection (crop bounding box) (wrapper function)
+def getRect(det:Detection, arr):
+    return getRectBb(det.bb, arr)
+
+# in some places we only have bounding box
+def getRectBb(bb: tuple, arr):
+    y, x, h, w = bb
+    y,x,h,w = int(y), int(x), int(h), int(w) # we need int to index array
+    bb_area = arr[x:x+w+1,y:y+h+1] # bounding box image
+    return bb_area
+    
+
+# redundant: throw out
 # function adds color histograms to detections (separate function for convenience (frames have different path))
 def colorHist2Det(dets: list[list[Detection]], path: str, begin:int = 0, end: int = -1, n_bins=8):
     if(end < begin):
@@ -302,17 +358,6 @@ def updateDetColorHistFromFrame(det: Detection, frame, n_bins=8):
     det.color_hist = getColorHist(frame_bb,n_bins=n_bins)
     det.hasHist = True
 
-# function returns rectangular region around detection (crop bounding box) (wrapper function)
-def getRect(det:Detection, arr):
-    return getRectBb(det.bb, arr)
-
-# in some places we only have bounding box
-def getRectBb(bb: tuple, arr):
-    y, x, h, w = bb
-    y,x,h,w = int(y), int(x), int(h), int(w) # we need int to index array
-    bb_area = arr[x:x+w+1,y:y+h+1] # bounding box image
-    return bb_area
-    
 
 # function calculates color histogram from current frame's detecitons
 def getColorHist(frame_bb, n_bins=8):
@@ -335,6 +380,8 @@ def getColorHist(frame_bb, n_bins=8):
 # function calculates bhattacharyya coefficient for 2 histograms
 def compareHists(a, A):
     return np.sum(np.sqrt(a*A)) # bhattacharyya distance
+# ------------------------------------------------
+
 
 # funciton reads trajectories from file and returns array of trajectories
 def readTrajectoryFile(filename: str):
@@ -348,6 +395,60 @@ def readTrajectoryFile(filename: str):
     # tr_list.insert(0, t0)
     return tr_list
 
+
+# duck test: if it looks like a duck and if it quacks like a duck, then it is probably a duck
+def trDuckTest(tr1:Trajectory, tr2:Trajectory, also_check_origin=True):
+    i_ending_x = list(tr1.X[-1].x)
+    j_ending_x = list(tr2.X[-1].x)
+
+    i_nmerged = len(tr1.T2.keys())
+    j_nmerged = len(tr2.T2.keys())
+
+    if(also_check_origin):
+        i_origin_x = list(tr1.origin.x)
+        j_origin_x = list(tr2.origin.x)
+
+        return (i_origin_x == j_origin_x and i_ending_x == j_ending_x and i_nmerged == j_nmerged)
+    
+    return (i_ending_x == j_ending_x and i_nmerged == j_nmerged)
+
+
+
+# function drops redundant trajectories from list (those that are same (duplicated))
+# use_duck_test: removes even more trajectories
+# duck test (variation): if starts in same point, if it has same amount of connected trajectories and ends in same point, then it is probably same tr :)
+def dropRedundant(tr_list:list[Trajectory], red_level=0):
+    also_check_origin=True
+    use_duck_test=False
+    if(red_level >= 1):
+        use_duck_test=True
+    if(red_level >= 2):
+        also_check_origin=False
+    new_l = []
+    red_count = 0
+    for i in range(len(tr_list)):
+        tr_i = tr_list[i]
+        already_contained = False
+        for j in range(i):
+            tr_j = tr_list[j]
+            if(i == j):
+                continue
+            if(tr_i.T2.keys() == tr_j.T2.keys()):
+                already_contained = True
+                red_count = red_count+1
+                break
+            if(use_duck_test):
+                # check if starts with same tr, ends with same tr, has same number of trs
+                if(trDuckTest(tr_i, tr_j, also_check_origin=also_check_origin)):
+                    print(tr_i, " is 'same' as ",tr_j)
+                    red_count = red_count+1
+                    already_contained = True
+                    break
+                
+        if(not already_contained):
+            new_l.append(tr_list[i])
+    print("[dropRed] dropped %d redundant trajectories."%red_count)
+    return new_l
 
 # bounding box deteciton to Detection - generates Detection object with coordinates of center of a bounding box
 def bbDet2Det(bb: tuple, t: int = 0):
@@ -366,31 +467,31 @@ def getFrameAtI(i: int, path: str, toBGR=False):
 def i2frameI(i:int):
     return f'{i:08}'
 
-def showHists(hists:list, c=1):
-    color = ['b','g','r']
-    # show only in one dimension
-    _,ax = plt.subplots(1,len(hists))
-    # print(ax)
-    for j in range(len(hists)):
-        hist = hists[j]
-        arr = np.zeros((np.shape(hist)[0],3))
+# def showHists(hists:list, c=1):
+#     color = ['b','g','r']
+#     # show only in one dimension
+#     _,ax = plt.subplots(1,len(hists))
+#     # print(ax)
+#     for j in range(len(hists)):
+#         hist = hists[j]
+#         arr = np.zeros((np.shape(hist)[0],3))
         
         
-        for i in range(len(arr)):
-            arr[i,0] = np.sum(hist[i,:,:]) # c1
-            arr[i,1] = np.sum(hist[:,i,:]) # c2
-            arr[i,2] = np.sum(hist[:,:,i]) # c3
-        x = np.arange(len(arr))
+#         for i in range(len(arr)):
+#             arr[i,0] = np.sum(hist[i,:,:]) # c1
+#             arr[i,1] = np.sum(hist[:,i,:]) # c2
+#             arr[i,2] = np.sum(hist[:,:,i]) # c3
+#         x = np.arange(len(arr))
         
         
-        if(len(hists) == 1):
-            ax.bar(x,arr[:,c], color=color[c%3])
-        else:
-            ax[j].bar(x,arr[:,c], color=color[c%3])
-    # print(arr)
+#         if(len(hists) == 1):
+#             ax.bar(x,arr[:,c], color=color[c%3])
+#         else:
+#             ax[j].bar(x,arr[:,c], color=color[c%3])
+#     # print(arr)
     
-    # plt.bar(x,arr)
-    plt.show()
+#     # plt.bar(x,arr)
+#     plt.show()
 
 
 def getTrColor():
@@ -456,6 +557,78 @@ def drawBoundingBox(image, bb: tuple, color: list = [0,255,0]) -> None:
         points.append((x+w, y+i))
     coords2map(points, image, color=color, overwrite=True)
 
+# function shows image in named window with name name
+def showInNamed(name, image):
+    cv.namedWindow(name, cv.WINDOW_NORMAL)
+    cv.imshow(name, image)
+
+# function adds element to average, if it is 
+def addToAvg(a_avg, a_i, i) -> float:
+    return ( a_avg + (a_i/i) )*( i/(i+1) )
+
+# more general version of ^ (can be used to add 2 averages and get average as if it were whole)
+def add2Avg(a1, a2, a_i1, a_i2):
+    return (a1 + (a2*a_i2)/a_i1) * (a_i1 / (a_i1+a_i2))
+
+# addToAvg wrapper: calls it and modifies trajectory properties
+def addToAvgTr(a_i, tr:Trajectory):
+    if(tr.visual_avg is None):
+        tr.visual_avg = a_i
+    else:
+        new_a = addToAvg(tr.visual_avg, a_i, tr.visual_n)
+        tr.visual_avg = new_a
+    tr.visual_n = tr.visual_n+1
+
+# add2Avg wrapper: calls it and modifies trajectory properties
+def add2AvgTr(tr1:Trajectory, tr2:Trajectory):
+    if(tr1.visual_avg is None):
+        return (tr2.visual_avg, tr2.visual_n)
+    if(tr2.visual_avg is None):
+        return (tr1.visual_avg, tr1.visual_n)
+    
+    new_a = add2Avg(tr1.visual_avg, tr2.visual_avg, tr1.visual_n, tr2.visual_n)
+    new_ai = tr1.visual_n + tr2.visual_n
+    return (new_a, new_ai)
+
+# function calculates visual distance:
+def getTrVisualSimilarity(tr1:Trajectory, tr2:Trajectory):
+    return getVisualSimilarity(tr1.visual_avg, tr2.visual_avg)
+
+def getVisualSimilarity(features1, features2):
+    k = 100
+    v1 = features1.reshape(-1)
+    v2 = features2.reshape(-1)
+    # print(v1)
+    dist = getVecDist(v1,v2)
+    dist_k = dist/k
+    return np.exp(-dist_k)
+
+def getVecDist(v1, v2):
+    diff = v2-v1
+    dist = np.sqrt(np.dot(diff, diff))
+    return dist
+
+
+
+# function is actually very extend4 specific: needs to have feature_map_and_padding with as tuple -> (feature_map, pad_l, pad_u)
+def getFeaturesFromFeatureMapAndPadding(det:Detection, feature_map_and_featExt):
+    pca_feat, featureExt = feature_map_and_featExt
+    pad_l, pad_u = featureExt.last_padder.pad_l, featureExt.last_padder.pad_u # used to align bb properly
+    # get features:
+    patches = patchesInBB(pca_feat, det.bb, xy_off=[pad_l, pad_u])
+    patches_rp = roiPool(patches, use_2d=False)
+    return patches_rp.astype(np.float64)
+
+def getFeaturesFromFeatureMapAndPadding2(det:Detection, feature_map_and_featExt):
+    pca_feat, featureExt = feature_map_and_featExt
+    pad_l, pad_u = featureExt.last_padder.pad_l, featureExt.last_padder.pad_u # used to align bb properly
+    # get features:
+    patches = patchesInBB(pca_feat, det.bb, xy_off=[pad_l, pad_u])
+    return patches
+
+def bb2str(bb):
+    return "%6.2f,%6.2f,%6.2f,%6.2f"%(bb[0],bb[1],bb[2],bb[3])
+
 # gets intersection bounds of bounding boxes
 def getBBIntersectionBounds(d1: Detection, d2: Detection):
     tl_a = np.array(d1.bb[0:2])
@@ -500,9 +673,114 @@ def vecScore(a,b, l=0.01):
     # score = score - (c_d / (a_d+b_d))
     # print(a_d,b_d)
     return np.exp(-l*(a_d+b_d)) 
+
+# QBP stuff: build matrix (previously in dspace)
+# method builds trajectory interatction matrix
+# type 1: detection-wise, type 2: trajectory-wise
+def buildQBPMatrixX(tr_list: list[Trajectory], type=1):
+    # 1. calculate q_ii terms ("merit terms")
+    Q_ii = [] # list of q_ii (trajectory scores, "merit terms")
+    for tr in tr_list:
+        # q_ii = tr.getScore2()
+        q_ii = tr.getScoreX(type=type)
+        Q_ii.append(q_ii)
     
+    Q = np.diag(Q_ii) # make diagonal matrix
+    
+    # 2. calculate q_ij terms (interaction terms (similar to q_ii, but only consider intersecting trajectory points))
+    n_tr = len(Q_ii)
+    m = 0 # row index
+    n = 0 # column index
+
+    # I miss good old for loops from java so much ...
+    iii = 0
+    while( m <= (n_tr-1)):
+        n = m+1 # calculate only terms above diagonal, because Q is symmetric (Q[i,j] = Q[j,i])
+        while( n <= (n_tr -1)):
+            # 1. calculate interaction cost (points that are in intersection of both hypotheses)
+            # q_ij = tr_list[m].getInteractionCost2(tr_list[n])
+            q_ij = tr_list[m].getInteractionCostX(tr_list[n], type=type)
+            # print("t%-5d - t%-5d: %-6.2f" % (tr_list[m].id, tr_list[n].id, q_ij))
+            # 2. set q_ij term (q_ij, q_ji)
+            Q[m,n] = q_ij
+            Q[n,m] = q_ij
+            n = n+1
+            iii+=1
+        m = m+1
+    return Q
 
 
+
+
+# solveQBP3
+def solveQBP3(Q):
+    n,_ = np.shape(Q)
+    # print(Q)
+
+    # start without any motions
+    m = 0
+    m_max = 0
+    V = np.zeros((1,n)).astype(np.uint8)
+    max_v = V[0]
+    
+    while(V.size != 0):
+        V = allNextCombsFromPrev(V)
+        res = np.dot(np.dot(V, Q), V.T)
+        results = np.diag(res)
+
+        mask = np.where(results <= m, False, True)
+
+        results=results[mask]
+        V = V[mask]
+        if(V.size == 0):
+            break
+
+        min_res = np.min(results)
+        m = min_res # update previous min
+        max_idx = np.argmax(results)
+        max_res = results[max_idx]
+        if(max_res < m_max):
+            break
+        m_max = max_res
+        max_v = V[max_idx]
+    # print(max_v)
+    return (max_v.astype(np.uint8), m_max)
+
+def allNextCombsFromPrev(prev):
+    first = True
+    next_r = []
+    for arr in prev:
+        ones = np.sum(arr)
+        next_combs = allNextCombs(arr)
+        if(first):
+            next_r = next_combs
+            first = False
+        else:
+            mask = np.dot(next_r, next_combs.T)
+            mask = np.where(mask == ones, 0, 1)
+            mask = np.prod(mask, axis=0)
+            mask = mask.astype(np.bool_)
+            next_r = np.vstack((next_r, next_combs[mask]))
+    return next_r
+
+def allNextCombs(bin_arr):
+    n = len(bin_arr)
+    ones = np.sum(bin_arr) # get number of ones
+    zeros = np.uint64(n-ones)
+
+    # create matrix
+    ret_m = np.zeros((zeros, n))
+    # print(ret_m)
+    j = 0
+    for i in range(n):
+        if(bin_arr[i] == 1):
+            ret_m[:,i] = 1
+        else:
+            ret_m[j, i] = 1
+            j = j+1
+    return ret_m
+# ---------
+    
 
 tr_colors=[
     (158,98,64),

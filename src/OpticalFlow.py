@@ -1,19 +1,15 @@
 import sys
 sys.path.append('../RAFT/core')
-
 import argparse
-import os
 import cv2 as cv
-import glob
 import numpy as np
 import torch
 from PIL import Image
 import time
-import pickle
 from helper_func import *
 
+
 from raft import RAFT
-from utils import flow_viz
 from utils.utils import InputPadder
 
 # run as: python3 flow_est.py --model=../../RAFT/models/raft-things.pth --path=../../data/sample/
@@ -23,7 +19,8 @@ from utils.utils import InputPadder
 # DATA_ROOT = '../../data/'
 DATA_ROOT = '../data/'
 ESTIMATES_ROOT = 'estimates/'
-FRAMES_PATH = '../data/frames/LaSOT_bird-2/color/'
+SEQUENCE = "LaSOT_bird-15"
+FRAMES_PATH = '../data/frames/'+SEQUENCE+'/color/'
 DEVICE = 'cuda'
 CALCULATE_FLOW = not True
 MODEL = "../RAFT/models/raft-things.pth"
@@ -31,7 +28,7 @@ BLANK_FLOW = True
 
 
 class OpticalFlow:
-    def __init__(self, model_args, frames_path=None, save_path=None):
+    def __init__(self, model_args, frames_path=None, save_path=None, no_print=False):
         # init model:
         print("[FLOW] init model")
         self.calculate_blank = True
@@ -58,6 +55,7 @@ class OpticalFlow:
         self.model.eval()
         self.frames_path = frames_path
         print("[FLOW] init done") #, carry on
+        self.no_print = no_print
 
     # method computes optical flow between image at i and i+1
     def computeFlowAtI(self, i):
@@ -85,11 +83,13 @@ class OpticalFlow:
             image1, image2 = padder.pad(image1, image2)
 
             # calls forward
-            print("estimating flow ... ", end="", flush=True)
-            start = time.time()
+            if(not self.no_print):
+                print("estimating flow ... ", end="", flush=True)
+                start = time.time()
             flow_low, flow_up = self.model(image1, image2, iters=20, test_mode=True)
-            stop = time.time()
-            print("flow computed, time: ", stop-start, " s")
+            if(not self.no_print):
+                stop = time.time()
+                print("flow computed, time: ", stop-start, " s")
             
             flow = padder.unpad(flow_up)[0].permute(1,2,0).cpu().numpy()
             if(self.save_flow):
@@ -98,20 +98,23 @@ class OpticalFlow:
             return flow
     
     # test method, to simulate ^ (but it returns precalculated flow, when on titanX, upper method should be used)
-    def computeFlowAtITest(self, i, name_off=0):
-        flow_path = "../data/flow_est/LaSOT_bird-2_1/"
-        frame_i = f'{i:08}'
-        flow = np.load(flow_path+frame_i+".npy")
+    # def computeFlowAtITest(self, i, name_off=0):
+    #     # flow_path = "../data/flow_est/"+SEQUENCE+"/"
+    #     # flow_path = "/home/gasper/disk/Nedokumenti/Faks/didi_sequences/LaSOT_bird-2_flow/"
+    #     # flow_path = "/home/gasper/disk/Nedokumenti/Faks/didi_sequences/LaSOT_bird-2_flow/"
+    #     flow_path = "/home/gasper/Faks/3_letnik/diplomska/koda/data/flow_est/got10k/"
+    #     frame_i = f'{i:08}'
+    #     flow = np.load(flow_path+frame_i+".npy")
         
-        # image_i = f'{i:08}.jpg'
-        # cv.imread(FRAMES_PATH+image_i)
-        # image_i = f'{i+1:08}.jpg'
-        # cv.imread(FRAMES_PATH+image_i) # this could be problematic
+    #     # image_i = f'{i:08}.jpg'
+    #     # cv.imread(FRAMES_PATH+image_i)
+    #     # image_i = f'{i+1:08}.jpg'
+    #     # cv.imread(FRAMES_PATH+image_i) # this could be problematic
         
-        if(self.save_flow):
-            image_i1 = f'{i+name_off:08}' 
-            np.save(self.save_path+image_i1+'.npy', flow) # save as nnnnnnnn.npy (numpy matrix)
-        return flow
+    #     if(self.save_flow):
+    #         image_i1 = f'{i+name_off:08}' 
+    #         np.save(self.save_path+image_i1+'.npy', flow) # save as nnnnnnnn.npy (numpy matrix)
+    #     return flow
 
 
 def load_image(imfile):

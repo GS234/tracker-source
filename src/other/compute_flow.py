@@ -14,6 +14,7 @@ from raft import RAFT
 from utils.utils import InputPadder
 
 # run as: python3 compute_flow.py --model=../../RAFT/models/raft-things.pth --path=../../data/sample/
+# run as: python3 compute_flow.py --model=RAFT/models/raft-things.pth --path=/storage/private/student-vicos/DisD/sequences/GOT-10k_GOT-10k_Val_000014
 # run as: python3 flow_est.py --model=../../RAFT/models/raft-things.pth
 
 DEVICE = 'cuda'

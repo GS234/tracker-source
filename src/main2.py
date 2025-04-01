@@ -20,7 +20,7 @@ warnings.simplefilter('ignore')
 # run examples:
 # python3 main2.py --sequence='/home/gasper/disk/Nedokumenti/Faks/didi_sequences/GOT-10k_GOT-10k_Val_000014' --dets='/home/gasper/Faks/3_letnik/diplomska/koda/data/detections/GOT-10k_GOT-10k_Val_000014.txt'
 # python3 main2.py --sequence='/home/gasper/disk/Nedokumenti/Faks/didi_sequences/LaSOT_bird-2' --dets='/home/gasper/Faks/3_letnik/diplomska/koda/data/detections/LaSOT_bird-2.txt'
-# CUDA_VISIBLE_DEVICES=2 python3 main2.py --sequence='/home/gasper/tracker_ws/workspace/sequences/GOT-10k_GOT-10k_Val_000014' --dets='/home/gasper/tracker_ws/dets/GOT-10k_GOT-10k_Val_000014.txt'
+# CUDA_VISIBLE_DEVICES=2 python3 main2.py --sequence='/home/gasper/tracker_ws/workspace/sequences/LaSOT_bottle-12' --dets='/home/gasper/tracker_ws/dets/LaSOT_bottle-12.txt' --track='/home/gasper/tracker_ws/tracker/'
 
 
 
@@ -33,8 +33,10 @@ ASK_BEFORE_FLOW_DELETE = not True # the '-y' kinda flag
 
 
 DRAW_DETS=False
-MAIN_DEB= not True
-MAIN_QD = not not True
+# MAIN_N=2 # 0: main, 1: main_d1, 2: main_d2, ...
+# MAIN_N=25 # 0: main, 1: main_d1, 2: main_d2, ...
+# MAIN_N=5 # 0: main, 1: main_d1, 2: main_d2, ...
+MAIN_N=0 # 0: main, 1: main_d1, 2: main_d2, ...
 SAVE_TRAJECTORIES= True # switch to save trajectories on every selection step for vizualization/debug purposes
 # EXT_THR=10 # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory (number of relative holes, essentially))
 EXT_THR=5 
@@ -213,10 +215,6 @@ def analyzeTrsWithQ(tr_list: list[Trajectory], type=1):
         if(marker_array[i]): all_else.append(tr_list[i])
     # print(marker_array)
     return simple_trs, all_else
-
-
-
-
 # --------------------
 
 # function checks whether trajectory tr is within max_dist radius around detections (usually one, but supports many)
@@ -283,6 +281,27 @@ def selectBestTrAroundDetAtTime(tr_list:list[Trajectory], bbDet, time:int=0, tim
                     selected_t = trr
     return selected_t
 
+# function to select best trajectory around detection at time t
+def selectBestTrAroundDetAtTime2(tr_list:list[Trajectory], dets: list[Detection]):
+    max_iou = 0
+    selected_t = tr_list[0]
+    for detl in dets:
+        if(detl):
+            det = detl[0]
+            for trr in tr_list:
+                first_d = trr.X[0]
+                if(first_d.t == det.t): # search only among few first frames
+                    selection_det = det
+                    iou = IoU(first_d, selection_det)
+                    print("t%5d (t%5d): %5.2f"%(trr.not_so_much_unique_id, trr.id, iou))
+                    if(iou > max_iou):
+                        max_iou = iou
+                        selected_t = trr
+                    elif(iou == max_iou):
+                        if(selected_t.getScore2() < trr.getScore2()):
+                            selected_t = trr
+    return selected_t
+
 # II. qbp-specific functions:
 # function merges trajectories in tr_list into single trajectory
 def mergeTrajectories2(tr_list:list[tuple[Trajectory, float, float]]) -> Trajectory:
@@ -305,7 +324,21 @@ def mergeTrajectories2(tr_list:list[tuple[Trajectory, float, float]]) -> Traject
             # must do: X, D2
             # should do: holes, holes_ref, term, color
             t.X[0].color = [10,10,150]
-            t_merged.X = t_merged.X + ext_dets + t.X
+            # t_merged.X = t_merged.X + ext_dets + t.X
+            # merge_lists1 = mergeLists(t_merged.X[-2:], ext_dets)
+            # merge_lists2 = mergeLists(merge_lists1, t.X)
+            # t_merged.X = t_merged.X[:-2] + merge_lists2
+            
+            tx_add = t.X
+            if(t.X[0].t == t_merged.X[-1].t):
+                t_merged.X[-1] = t.X[0]
+                tx_add = t.X[1:]
+            
+            # t_merged.X = t_merged.X + ext_dets + t.X
+            t_merged.X = t_merged.X + ext_dets + tx_add
+
+
+
             t_merged.D2 = {**t_merged.D2, **t.D2}
             t_merged.T2 = {**t_merged.T2, **t.T2} # also merge T2
             t_merged.F = {**t_merged.F, **t.F} # also merge F
@@ -409,6 +442,17 @@ def extendAllPossibleNext(t:Trajectory, collected:list[tuple[Trajectory, float]]
     for p in possible_next:
         # tr_possible_next = tr.getPossibleNext(all_trs, max_space_diff=50)
         tr = p[0]
+
+        # check if p is already contained in current path. If it is, continue (to avoid cycles)
+        already_in = False
+        for c in collected:
+            tr2 = c[0]
+            if(tr == tr2):
+                already_in = True
+                break
+        if(already_in): continue
+                
+        
         # tr_possible_next = []
         # if(type==1):
         #     tr_possible_next = tr.getPossibleNext2(all_trs, time_window=time_window)
@@ -462,43 +506,6 @@ def connectTrs(tr1:Trajectory, tr_all:list[Trajectory], max_time=100):
     else:
         return [tr_add] + connectTrs(tr_add, tr_all)
 
-
-# function prints path (list of trajectories) to file
-# n: total number of frames
-def path2File(path: list[Trajectory], n:int, results_path):
-    with open(results_path+"results.txt", 'w') as fp: # fp: file pointer?
-        bb_total = 0
-        for i in range(len(path)):
-            if(i != 0):
-                t_end = path[i-1].X[-1].t
-                t_begin = path[i].origin.t
-                t_diff = t_begin - t_end
-                t_pad = t_diff-1
-                
-                if(i == 0):
-                    tr_string, n_bb = path[i-1].tr2bbStr2(t_pad, different_first_line=True)
-                else:
-                    tr_string, n_bb = path[i-1].tr2bbStr2(t_pad)
-                fp.write(tr_string)
-               
-                bb_total = bb_total + n_bb
-
-            # also add last one
-            if(i == len(path)-1):
-                # pad last one to end of sequence:
-                if(i == 0): # in case this was the only tr in path
-                    tr_string, n_bb = path[i].tr2bbStr2(0, different_first_line=True)
-                else:
-                    tr_string, n_bb = path[i].tr2bbStr2(0)
-                fp.write(tr_string)
-                bb_total = bb_total + n_bb
-                t_pad = n - bb_total
-                tr_string = path[i].lastNtimes(t_pad)
-                fp.write(tr_string)
-                bb_total = bb_total + t_pad
-
-# -------------------------
-
 # function returns init variables from options file
 def getConfigConsts(config_name, init_file: str = 'options.ini'):
     init_data = ConfigParser()
@@ -525,7 +532,7 @@ def main():
     global USE_PRECOMPUTED
     
     global SAVE_TRAJECTORIES
-    RUN_ALL = not False
+    RUN_ALL = False
 
     # some defaults:
     T_OFFSET = 1
@@ -536,6 +543,7 @@ def main():
         # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getConfigConsts('got10k14') # got10k14
         # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getConfigConsts('coin18') # got10k14
         T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getConfigConsts('bird2') # lasot bird2
+        # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getConfigConsts('chameleon20') # lasot chameleon20
     
     
     # ARGUMENTS
@@ -632,6 +640,7 @@ def main():
     
         # INIT FEATURE EXTRACTOR
     featureExt = FeatureExtractor(model_size='base')
+    # featureExt = FeatureExtractor(model_size='small')
     featureExt.getFeatures(frame) # sets necessary offsets by computing first frame (could also do that differently)
     frame_features = computeOrGetPCAFeaturesAtI(t_global, frame, featureExt, save_feat=True) # get features, init trs
         # END INIT FEATURES
@@ -806,7 +815,7 @@ def main():
             # ---
 
 
-            # update target:
+            # 4. update target:
             print("[UPDATING TARGET]")
             if(target_d.tr.term):
                 # we need to select new target, because this one is fin
@@ -844,40 +853,39 @@ def main():
 
 
 
-            # 3.1 pruning step: discard trajectories, that are too far away from target (testing: target is gt)
-            # 3.1.1: get current gt:
+            # 5 pruning step: discard trajectories, that are too far away from target (testing: target is gt)
             print("[pruning]")
-            gt_at_ti = GT13[t_global]
             n_prune = 5 # frames
             max_dist = 150
-            # tr = getPruned(tr, gt_at_ti, n_prune, max_dist)
             tr = getPruned(tr, [target_d], n_prune, max_dist)
             
             # -----------------
             
-            # 4. hypothesis selection:
+            # 6. hypothesis selection:
             
-            # 4.1 analyze trs with Q matrix: get pure, drop redundant
+            # 6.1 analyze trs with Q matrix: get pure, drop redundant
             pure_trs, not_pure = analyzeTrsWithQ(tr) # analyze, drop out pure and copies of same (add pure, do qbp with all else)
             
-            # 4.2 build Q with trs, that are not pure:
-            # tr.sort(key=lambda x: x.getScore2(), reverse=True) # sort to minimize chance of getting stuck in some local minimum (there ARE issues with qbp-solver)
-            Q = dspace.buildQBPMatrix3(not_pure)
-            
-            print("pure:")
-            printTrListWithStatsOrdered(pure_trs)
-            print("not pure:")
-            printTrListWithStatsOrdered(not_pure)
-            print(Q)
+            # 6.2 build Q with trs, that are not pure:
+            not_pure.sort(key=lambda x: x.getScore2(), reverse=True) # sort to minimize chance of getting stuck in some local minimum (there ARE issues with qbp-solver)
+            Q = buildQBPMatrixX(not_pure, type=1)
 
-            # 4.3 solve QBP
+            
+            # print("pure:")
+            # printTrListWithStatsOrdered(pure_trs)
+            # print("not pure:")
+            # printTrListWithStatsOrdered(not_pure)
+
+            # 6.3 solve QBP
             # np.savetxt("Q2.txt",Q, fmt="%7.3f")
-            print("solving:")
-            v = dspace.solveQBP2(Q)
+            print(Q)
+            print("solving Q ...")
+            v = solveQBP2(Q)
+            print("done solving, v:")
             print(v)
 
 
-            # 5. keep only selected trajectories for next frame (all else are term):
+            # 6.4 keep only selected trajectories for next frame (all else are term):
             tr_next2: list[Trajectory] = []
             # print("selected: ", end="")
             for ii in range(len(v[0])):
@@ -892,7 +900,7 @@ def main():
             # print()
             # ---
 
-            # 6. visualization
+            # 6.5 visualization
             if(not RUN_ALL):
                 showing_next = set()
                 print("[VISUALIZATION]")
@@ -938,12 +946,10 @@ def main():
                 # # np.savetxt("Qmat.txt",Q, fmt="%7.3f")
                 # return
 
-
-                
                 # 7.1. stage II (bridged) (is faster)
-                print("before get merged 1")
+                print("get merged 1:")
                 merged_trs1 = getMergedHypotheses(tr_all, type=order[0], time_window=stage_II_III_timew)
-                print("after get merged 1")
+                print("done (1)")
                 
 
                 # 7.2. get unused trajectories
@@ -957,9 +963,9 @@ def main():
                 tr_left = list(tr_left)
 
                 # 7.3. stage III (flow) with unused trajectories (is slower)
-                print("before get merged 2")
+                print("get merged 2")
                 merged_trs2 = getMergedHypotheses(tr_left, type=order[1], time_window=stage_II_III_timew)
-                print("after get merged 2")
+                print("done (2)")
 
                 # set all previous to fin, as they are replaced by new ones:
                 for t in tr:
@@ -1022,15 +1028,17 @@ def main():
 
                 # q-matrix analysis (type 2 this time)
                 simple_tr,all_else = analyzeTrsWithQ(merged_merged, type=2)
+                all_else.sort(key=lambda x: x.getScoreII(), reverse=True) # sort to minimize chance of getting stuck in some local minimum
                 Q = buildQBPMatrixX(all_else, type=2) # build q with all trs that have not been filtered by analysis
 
                 # SOLVE QBP:
                 # print(Q)
-                print("solving Q")
-                res = dspace.solveQBP2(Q)
-                # res = dspace.solveQBP(Q)
-                print(res)
+                print("solving (merge) ...")
+                res = solveQBP2(Q)
                 v = res[0]
+                # res = solveQBP(Q)
+                print("done solving, v:")
+                print(res)
                 
                 # SHOW SELECTED:
                 selected_merged:list[Trajectory] = simple_tr # init it with those, that do not need to be selected by qbp
@@ -1043,12 +1051,13 @@ def main():
                             selected_merged.append(merged_at_i)
                     else:
                         all_else[t_i].term = True # terminate ones that are not selected, because they will not make it in next iteration thus won't be updated
-                        printTrWithStats(all_else[t_i], add_to_end=" [x] ")
+                        # printTrWithStats(all_else[t_i], add_to_end=" [x] ")
                 
                 # add selected merged to idTr_map:
                 print("adding selected merged to idTr_map")
                 for t_i in selected_merged:
                     idTr_map[t_i.not_so_much_unique_id] = t_i # update trajectories holding/representing that id
+                print("added")
                 
                 # update idtrmap fin/not fin:
                 updateFinInIdTR(idTr_map, t_global)
@@ -1061,7 +1070,7 @@ def main():
                     print("idTr_map:")
                     printTrListWithStatsOrdered(idTr_map.values())
 
-                # 7.5. use new trajectories in next round
+                # use new trajectories in next loop cycle
                 # tr = tr+selected_merged # ?? why add? how 'bout id switch?
 
                 tr = selected_merged
@@ -1129,11 +1138,12 @@ def main():
                     showing_prev = showing_next
 
                     # draw gt bb, draw target bb:
-                    if(gt_at_ti):
-                        drawBoundingBox(dspace.map, gt_at_ti[0].bb, [0,0,255])
+                    # if(gt_at_ti):
+                        # drawBoundingBox(dspace.map, gt_at_ti[0].bb, [0,0,255])
                     
                     ext_bb_off = 1
                     ext_bb = list(np.array(target_d.bb[0:2])+ext_bb_off)+list(np.array(target_d.bb[2:])-(ext_bb_off*2))
+                    # ext_bb = bbResize(target_d.bb, ext_bb_off=ext_bb_off)
                     drawBoundingBox(dspace.map, ext_bb, [100,0,255])
 
                     dspace.showSpace(draw_dets=DRAW_DETS)
@@ -1201,8 +1211,8 @@ def main():
         # SOLVE QBP:
         # print(Q)
         np.savetxt("Q.txt",Q, fmt="%7.3f")
-        res = dspace.solveQBP2(Q)
-        # res = dspace.solveQBP(Q)
+        res = solveQBP2(Q)
+        # res = solveQBP(Q)
         # print(res)
         v = res[0]
 
@@ -1259,7 +1269,7 @@ def main():
 
     # 2. group them by hand:
     if(path_creation_type == 2):
-        SAVE_PATH_TR = False
+        SAVE_PATH_TR = True
         trajectories: list[Trajectory] = list(idTr_map.values())
         if(trajectories):
             t0 = selectBestTrAroundDetAtTime(trajectories, GT13[T_OFFSET][0].bb)
@@ -1267,18 +1277,19 @@ def main():
             print(path)
             # end 2.
 
-            # write trajectory to file
-            path2File(path, n_all, RESULT_PATH)
             if(SAVE_PATH_TR):
-                with open(RESULT_PATH+'trs_path.p', 'wb') as fp:
-                    abc = [T_OFFSET, copy.deepcopy(path)]
+                with open(RESULT_PATH+'trs.p', 'wb') as fp:
+                    abc = [T_OFFSET, n_all, copy.deepcopy(path)]
                     pickle.dump(abc, fp)
+            # write trajectory to file
+            # path2File(path, n_all, RESULT_PATH)
+            path2File2(path, n_all, RESULT_PATH)
 
     if(SAVE_TRAJECTORIES):
         print("[END] saving trs stored in idtr_map")
-        with open(RESULT_PATH+'trs.p', 'wb') as fp:
+        with open(RESULT_PATH+'trsa.p', 'wb') as fp:
             # abc = [T_OFFSET, copy.deepcopy(idTr_map)]
-            abc = [T_OFFSET, copy.deepcopy(idTr_map)]
+            abc = [T_OFFSET, n_all, copy.deepcopy(idTr_map)]
             pickle.dump(abc, fp)
     if(not USE_PRECOMPUTED):
         deletePrecomputed(COMPUTED_FLOW, confirm=ASK_BEFORE_FLOW_DELETE)
@@ -1288,7 +1299,7 @@ def main():
     # end main
 
 # debug main:
-def main_d():
+def main_d1():
     print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
 
     FRAMES_PATH = "frames/LaSOT_bird-2/color/"
@@ -1367,15 +1378,15 @@ def main_d():
 
 
 # quick debug main:
-def main_qd():
+def main_d2():
     print("[INFO] This is main_qd. To run main, set MAIN_DEB to False. To run main_deb, set MAIN_QD to False.")
     global COMPUTED_FLOW
     global COMPUTED_FEAT
 
-    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, _, _ = getConfigConsts('bird2') # lasot bird2 sequence
-    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, _, _ = getConfigConsts('got10k14') # got10k14 sequence
-    T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('coin18') # coin18 sequence
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('coin18') # coin18 sequence
     # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('bird2') # bird2 sequence
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('got10k14') # bird2 sequence
+    T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('chameleon20') # chameleon20 sequence
     t_global = T_OFFSET
     # init dspace
     
@@ -1395,127 +1406,35 @@ def main_qd():
     # end init dspace
 
     # init feature extractor
-    featureExt = FeatureExtractor(model_size='base')
-    featureExt.getFeatures(frame0) # sets necessary offsets by computing features for first frame
+    # featureExt = FeatureExtractor(model_size='base')
+    # featureExt.getFeatures(frame0) # sets necessary offsets by computing features for first frame
     # end init feature ext
 
     # get trajectories:
     # T_OFFSET, t_global, tr_all = read_tr_file('trsdeb2.p')
-    file = read_tr_file('results_seq/coin18/trs.p')
+    # file = read_tr_file('results_seq/coin18/trs.p')
+    file = read_tr_file('trs.p')
     T_OFFSET, idTr_map = file
-    print(file)
+    # print(file)
+    # idTr_map = list(idTr_map.values())
+    # idTr_map = idTr_map
+    idTr_map = list(idTr_map.values())
 
     print("tr all:")
     
-    printTrListWithStatsOrdered(idTr_map.values())
-
-    # ------------
-    # # 7.1. stage II (bridged) (is faster)
-    # # order=[2,1]
-    # order=[1,2] # maybe this, flow is slow
-    # stage_II_III_timew = 10
-    # print("before get merged 1")
-    # merged_trs1 = getMergedHypotheses(tr_all, type=order[0], time_window=stage_II_III_timew)
-    # print("after get merged 1")
-    
-
-    # # 7.2. get unused trajectories
-    # tr_left = set(tr_all)
-    # t_i = 0
-    # for t in merged_trs1:
-    #     key_set = set(t.T2.keys())
-    #     if(len(key_set) > 1):
-    #         tr_left = tr_left - key_set
-    #     t_i = t_i+1
-    # tr_left = list(tr_left)
-
-    # # 7.3. stage III (flow) with unused trajectories (is slower)
-    # print("before get merged 2")
-    # merged_trs2 = getMergedHypotheses(tr_left, type=order[1], time_window=stage_II_III_timew)
-    # print("after get merged 2")
-
-    # # set all previous to fin, as they are replaced by new ones:
-    # # for t in tr:
-    # #     t.term = True
-    
-    
-    # # 7.4. select best trajectories to be used in new round
-    # merged_merged = merged_trs1+merged_trs2
-
-    # # also prune them before qbp (but only those that are fin):
-    # # prune ones that are too far before building Q:
-    # # get only those that are not fin
-    # print("before pruning")
-    # to_prune: list[Trajectory] = []
-    # all_else: list[Trajectory] = []
-    # for tr in merged_merged:
-    #     if(len(tr.X) > 1): # also keep only ones that are longer than 1
-    #         if(tr.term):
-    #             all_else.append(tr)
-    #         else:
-    #             to_prune.append(tr)
-    # print("[pruning merged]")
-    # gt_at_ti = GT13[t_global]
-    # max_dist = 150
-    # tr = getPruned(to_prune, gt_at_ti, -1, max_dist) # -1? to prune without length restriction
-    # merged_merged = to_prune + all_else
-
-
-    # merged_merged = dropRedundant(merged_merged, red_level=2) # redundancy level: 2 ('strict' mode: preserve only one end point and number of merged)
-    # # q-matrix analysis (type 2 this time)
-    # simple_tr,all_else = analyzeTrsWithQ(merged_merged, type=2)
-    # Q = buildQBPMatrixX(all_else, type=2) # build q with all trs that have not been filtered by analysis
-
-    # # SOLVE QBP:
-    # # print(Q)
-    # print("solving Q")
-    # res = dspace.solveQBP2(Q)
-    # # res = dspace.solveQBP(Q)
-    # print(res)
-    # v = res[0]
-    # selected_trs = simple_tr + [x[0] for x in zip(all_else, v) if x[1] == 1]
-
-    # print("selected:")
-    # printTrListWithStatsOrdered(selected_trs)
-    # ------------
-
-    
-    # print("merged merged:")
-    # printTrListWithStatsOrdered(merged_merged)
-
-    
-    # Q = buildQBPMatrixX(merged_merged, type=2) # add this, and also make memoization
-    # print(Q)
-    # print(dspace.solveQBP2(Q))
-    
-    # a,b = analyzeTrsWithQ(merged_merged, type=2)
-    # print("this is a:")
-    # printTrListWithStatsOrdered(a)
-    # print("this is b:")
-    # printTrListWithStatsOrdered(b)
-    # return
-
-
-    # merged_merged:list[Trajectory] = []
-    # t_off, t_2, selected_t, idTr_map, merged_merged = read_tr_file('trs.p')
-    # _, idTr_map = read_tr_file('trsdeb.p')
-
-    
-    # i = 0
-    # print("idTr_map (all):")
-    # for id_tr in idTr_map:
-    #     tr = idTr_map[id_tr]
-    #     printTrWithStats(tr, i)
-    #     tr.detectionSpace = dspace
-    #     i+=1
-
+    # printTrListWithStatsOrdered(idTr_map.values())
+    printTrListWithStatsOrdered(idTr_map)
 
     # show trajectories in current time (and image features) ---
     # print i-th tr
     # trajectories = merged_merged
-    trajectories: list[Trajectory] = list(idTr_map.values())
+    # trajectories: list[Trajectory] = list(idTr_map.values())
+    trajectories: list[Trajectory] = list(idTr_map)
     t0 = selectBestTrAroundDetAtTime(trajectories, GT13[T_OFFSET][0].bb)
+    # t0 = selectBestTrAroundDetAtTime2(trajectories, GT13[0:15])
     path = [t0]+connectTrs(t0, trajectories)
+    
+    # path = idTr_map
     
     path_trs = []
     for tr in path:
@@ -1524,13 +1443,13 @@ def main_qd():
     # path2File(path, n, RESULT_PATH+'2')
     # trajectories = trajectories + path
     t_global = 1
-    # t_global = 570
+    # t_global = 530
     # t_global = 800
     # t_global = 805
     # t_global = 3690
     for t in trajectories:
         t.detectionSpace = dspace
-    trajectories = path_trs
+    # trajectories = path_trs
 
     SAVE_FEAT = not True
     SHOW_IMG = True
@@ -1541,10 +1460,10 @@ def main_qd():
         dspace.lastFrame = frame.copy()
 
         # patches:
-        pca_feat = computeOrGetPCAFeaturesAtI(t_global, frame, featureExt, save_feat=SAVE_FEAT)
-        pad_l, pad_u = featureExt.last_padder.pad_l, featureExt.last_padder.pad_u # used to align bb properly
-        if(SHOW_IMG):
-            showInNamed("image - features", pca_feat)
+        # pca_feat = computeOrGetPCAFeaturesAtI(t_global, frame, featureExt, save_feat=SAVE_FEAT)
+        # pad_l, pad_u = featureExt.last_padder.pad_l, featureExt.last_padder.pad_u # used to align bb properly
+        # if(SHOW_IMG):
+        #     showInNamed("image - features", pca_feat)
 
         # get all trajectories, that live in this time instant:
         # trajectories_that_live_at_this_time = []
@@ -1558,10 +1477,12 @@ def main_qd():
                 t = t_global-tr.X[0].t # offset time
                 tr_det_t:TDet = tr.X[t]
                 printTrWithStats(tr)
+                t_off = t_global - tr.origin.t
+                print(tr.X[t_off:t_off+10])
                 
                 # get features:
-                patches = patchesInBB(pca_feat, tr_det_t.bb, xy_off=[pad_l, pad_u])
-                patches_rp = roiPool(patches, use_2d=False)
+                # patches = patchesInBB(pca_feat, tr_det_t.bb, xy_off=[pad_l, pad_u])
+                # patches_rp = roiPool(patches, use_2d=False)
                 
                 # draw things
                 if(SHOW_IMG):
@@ -1578,180 +1499,356 @@ def main_qd():
             dspace.clearSpace()
         t_global = t_global +1
     # ---------------------------------
+
+
+def main_d25():
+    print("[INFO] This is main_d25. To run main, set MAIN_DEB to False. To run main_deb, set MAIN_QD to False.")
+    T_OFFSET = 1
+    D13 = [[]]+readDetFile2("testd.txt", T_OFFSET)
+    n = len(D13)-1 # all frames
+    # n = 1650 # all frames
+    # print(D13)
     
-    # printTrWithStats(selected_t)
-    # # print(idTr_map)
-    # # print(merged_merged)
-    # # def sort_fun1(x):
-    # #     return len(x.T2.keys())
-    # # def sort_fun2(x):
-    # #     return len(x.T2.keys())
-    # def len_nmerged_comparator(x,y):
-    #     len_merged_diff = len(x.T2.keys()) - len(y.T2.keys())
-    #     len_diff = len(x.X) - len(y.X)
-    #     if(len_merged_diff == 0):
-    #         return (len_diff)
-    #     else:
-    #         return len_merged_diff
-        
-    # from functools import cmp_to_key
-    # # merged_merged.sort(key=lambda x: len(x.T2.keys()), reverse=True)
-    # merged_merged.sort(key=cmp_to_key(len_nmerged_comparator), reverse=True)
-    # # merged_merged_selected_by_hand = []
-    # # for i in range(len(merged_merged)):
-    # #     if(i in [0,9,51,105,130,140,144]):
-    # #         merged_merged_selected_by_hand.append(merged_merged[i])
-    # merged_merged = dropRedundant(merged_merged, red_level=2)
-    # merged_merged = merged_merged_selected_by_hand
-    # printTrListWithStatsOrdered(merged_merged)
-    # merged_merged_temp = merged_merged
-    # merged_merged = merged_merged[8:43+1]
-    # merged_merged.sort(key=lambda x: x)
-
-    # Q = dspace.buildQBPMatrixX(merged_merged, type=2)
-    # selected = dspace.solveQBP2(Q)
-    # v= selected[0]
-    # sel_tr = zip(merged_merged, v)
-    # selected_trs = [x[0] for x in sel_tr if x[1] == 1]
+    def make_tr_from_dets(detl:list[int]):
+        first = True
+        tr = None
+        for d in detl:
+            det = D13[d][0]
+            if(first):
+                tr = Trajectory(det, None)
+                tr.build2()
+                first = False
+            else:
+                tdet = TDet_from_Detection(det)
+                tr.X.append(tdet)
+        return tr
     
-    # print(selected)
-    # printTrListWithStatsOrdered(selected_trs)
-    # print(sel_tr)
-
-    # i = 0
-    # print("merged:")
-    # for i in range(len(merged_merged)):
-    #     tr = merged_merged[i]
-    # # for tr in merged_merged:
-    # # for tr in selected_trs:
-    #     prob_same = False
-    #     for j in range(i):
-    #         tr_j = merged_merged[j]
-    #         tr_test = trDuckTest(tr, tr_j, also_check_origin=False)
-    #         if(tr_test):
-    #             prob_same = True
-    #             break
-
-    #     printTrWithStats(tr, i, add_to_end="keys: %s, dt=%s"%(str( sorted([x.not_so_much_unique_id for x in tr.T2.keys()]) ), str(prob_same) ))
-    #     # printTrWithStats(tr, i, add_to_end="keys: %s"%(str( sorted([x.id for x in tr.T2.keys()]) ) ))
-    #     tr.detectionSpace = dspace
-    #     tr.drawToSpace()
-    #     dspace.showSpace(draw_dets=False, draw_last_dets_bb=False)
-    #     dspace.clearSpace()
-
-        # # print(tr.T2.keys())
-        # for t in tr.T2.keys():
-        #     print(t.X[0], end=" ", flush=True)
-        # print()
-        # i+=1
-
-    # one specific trajectory
-    # printTrWithStats(idTr_map[1])
-    # for tr in idTr_map[1].T2.keys():
-    #     printTrWithStats(tr)
-
-
-    # build qbp:
-    # idx = [7,17,12,10]
-    # idx = [7,26]
-    # merged_selected:list[Trajectory] = []
-    # for i in range(len(merged_merged)):
-    #     if(i in idx):
-    #         merged_selected.append(merged_merged[i])
-    # Q = buildQBPFromTrs(merged_selected,dspace) # method simply called build method from dspace, it can now be done directly
-    # print(Q)
-    # v = dspace.solveQBP2(Q)
-    # print(v)
-
-    # check something:
-    # t_at_i = 25
-    # print("this is t at ",t_at_i,":")
-    # tr19 = merged_merged[t_at_i]
-    # printTrWithStats(tr19)
-    # print(list(list(tr19.T2.keys())[0].T2)[-1].origin)
-    # print(tr19.X)
-    # for tr in tr19.T2.keys():
-    #     printTrWithStats(tr)
-    # print("---")
+    t0 = make_tr_from_dets([3,3,3,3])
+    t1 = make_tr_from_dets([3,3,4,5,6,6,6,6])
     
-    # trs = list(list(tr19.T2.keys())[0].T2)
-    # dspace.map = getFrameAtI(781, FRAMES_PATH)
-    # dspace.lastFrame = dspace.map.copy()
-    # for tr in trs:
-    #     printTrWithStats(tr)
-    #     tr.detectionSpace = dspace
-    #     tr.drawToSpace()
-
-    # dspace.showSpace(draw_dets=False, draw_last_dets_bb=False)
-    # dspace.showSpace(draw_dets=False, draw_last_dets_bb=False)
-    
-
-    # merged_trs = getMergedHypotheses(trs,30,type=2)
-    # # print(merged_trs[0].X[-5:])
-    # # print(merged_trs[1].X[-5:])
-    # # print(merged_trs[2].X[0])
-    # print(merged_trs)
-    # for m in merged_trs:
-    #     printTrWithStats(m)
+    # tr1 = []
+    tr1 = [t0]
+    # tr1 = [t0,t1]
+    # print(path2list(tr1, n, T_OFFSET))
+    path2File2(tr1, n, RESULT_PATH+"3")
     
     
-    # return
-        
-    # show trajectories (selected only)
-    # while True:
-    # # for ii in i:
-    #     ii = i[j]
-    #     tr = merged_merged[ii]
-    #     start_time = tr.X[0].t
-    #     end_time = tr.X[-1].t
-    #     print(ii)
-    #     for t in range(end_time-start_time):
-    #         t_global = start_time+t
-    #         # set frame
-    #         frame = getFrameAtI(t_global, FRAMES_PATH)
-    #         dspace.map = frame
-    #         dspace.lastFrame = frame.copy()
+    # _,trs_path = read_tr_file("trsp.p")
+    # print(trs_path)
+    # # path_list = path2list(trs_path, n, T_OFFSET)
+    # path2File2(trs_path, n, RESULT_PATH+"3")
+
+
+
+def main_d3():
+    print("[INFO] This is main_qd. To run main, set MAIN_DEB to False. To run main_deb, set MAIN_QD to False.")
+    T_OFFSET = 1
+
+    t_global = T_OFFSET
+    # init dspace
+    
+    # get frame:
+    frame0 = np.zeros((100,100,3)).astype(np.uint8)
+    # print(frame0)
+    h, w, _ = np.shape(frame0)
+    dspace = DetectionSpace(h,w,time_offset=T_OFFSET, show_flow=False, disable_vis=False)
+    dspace.map = frame0
+    dspace.lastFrame = frame0.copy()
+    
+    # synthetic detections, trajectories:
+
+    dets: list[Detection] = []
+    tdets: list[TDet] = []
+    trs: list[Trajectory] = []
+    ii = 0
+    for i in range(0,90,3):
+        det = bbDet2Det( [i,i,31,31], ii+T_OFFSET)
+        dets.append(det)
+        tdets.append(TDet_from_Detection(det))
+        ii = ii+1
+    print(dets)
+    trs.append(Trajectory(dets[0], dspace, [0,0,255]))
+    trs.append(Trajectory(dets[18], dspace, [255,0,0]))
+    trs.append(Trajectory(dets[19], dspace, [0,255,0]))
+    trs.append(Trajectory(dets[20], dspace, [0,255,255]))
+    trs.append(Trajectory(dets[21], dspace, [255,255,0]))
+    trs.append(Trajectory(dets[22], dspace, [255,0,255]))
+    # trs.append(Trajectory(dets[23], dspace, [0,255,100]))
+
+    # extend it: getPossibleNext
+
+    trs[3].origin.t=trs[2].origin.t # tole naredi loop!
+    trs[4].origin.t=trs[2].origin.t # tole naredi loop!
+    
+    t_i = 0
+    for t in trs:
+        t.build2()
+        if(t_i == 0):
+            t.X = tdets[0:17]
+            t_i=1
+        t.drawToSpace()
+        drawBoundingBox(dspace.map, t.X[-1].bb)
+    dspace.showSpace()
+    dspace.clearSpace()
+
+    print("merging trajectories:")
+    merged: list[Trajectory] = getMergedHypotheses(trs)
+    printTrListWithStatsOrdered(merged)
+
+    for t in merged:
+        t.drawToSpace()
+        for tm in t.T2.keys():
+            drawO(dspace.map,tm.origin.x)
+        print("showing: ")
+        printTrWithStats(t)
+        print(t.X)
+        showInNamed("merged", dspace.map)
+        cv.waitKey(0)
+        dspace.clearSpace()
+
+
+# quick debug main:
+def main_d4():
+    print("[INFO] This is main_qd. To run main, set MAIN_DEB to False. To run main_deb, set MAIN_QD to False.")
+    global COMPUTED_FLOW
+    global COMPUTED_FEAT
+
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('coin18') # coin18 sequence
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('bird2') # bird2 sequence
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('got10k14') # bird2 sequence
+    T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('chameleon20') # chameleon20 sequence
+    t_global = T_OFFSET
+    # init dspace
+    
+    # get frame:
+    frame0 = getFrameAtI(t_global,FRAMES_PATH)
+    # print(frame0)
+    h, w, _ = np.shape(frame0)
+    dspace = DetectionSpace(h,w,time_offset=T_OFFSET, show_flow=False, disable_vis=False)
+    dspace.map = frame0
+    dspace.lastFrame = frame0.copy()
+    D13 = [[]]+readDetFile2(DETS_FILE, T_OFFSET)
+    GT13: list[list[Detection]] = [[]]+readDetFile2(GT_PATH,T_OFFSET)
+    n = len(D13)-1 # all frames
+    print(n)
+    dspace.D = D13[t_global:]
+    # end init dspace
+
+    # get trajectories:
+    # T_OFFSET, t_global, tr_all = read_tr_file('trsdeb2.p')
+    # file = read_tr_file('results_seq/coin18/trs.p')
+    file = read_tr_file('trs.p')
+    T_OFFSET, idTr_map = file
+    # print(file)
+    # idTr_map = list(idTr_map.values())
+    # idTr_map = idTr_map
+
+    # read detections from results file:
+    R13: list[list[Detection]] = [[]]+readDetFile2(RESULT_PATH+"result.txt")
+    # print(R13)
+    print("tr all:")
+    
+    # printTrListWithStatsOrdered(idTr_map.values())
+    printTrListWithStatsOrdered(idTr_map)
+
+    # show trajectories in current time (and image features) ---
+    # print i-th tr
+    # trajectories = merged_merged
+    # trajectories: list[Trajectory] = list(idTr_map.values())
+    trajectories: list[Trajectory] = list(idTr_map)
+    # t0 = selectBestTrAroundDetAtTime(trajectories, GT13[T_OFFSET][0].bb)
+    t0 = selectBestTrAroundDetAtTime2(trajectories, GT13[0:10])
+    path = [t0]+connectTrs(t0, trajectories)
+    # path = idTr_map
+    
+    path_trs = []
+    for tr in path:
+        tr.color = [0,0,255]
+        path_trs.append(tr)
+    # path2File(path, n, RESULT_PATH+'2')
+    # trajectories = trajectories + path
+    t_global = 1
+    # t_global = 530
+    # t_global = 800
+    # t_global = 805
+    # t_global = 3690
+    for t in trajectories:
+        t.detectionSpace = dspace
+    trajectories = path_trs
+
+    SAVE_FEAT = not True
+    SHOW_IMG = True
+    while t_global <= n:
+        print("-> ",t_global) # print time
+        frame = getFrameAtI(t_global, FRAMES_PATH)
+        dspace.map = frame
+        dspace.lastFrame = frame.copy()
+
+        # patches:
+        # pca_feat = computeOrGetPCAFeaturesAtI(t_global, frame, featureExt, save_feat=SAVE_FEAT)
+        # pad_l, pad_u = featureExt.last_padder.pad_l, featureExt.last_padder.pad_u # used to align bb properly
+        # if(SHOW_IMG):
+        #     showInNamed("image - features", pca_feat)
+
+        # get all trajectories, that live in this time instant:
+        # trajectories_that_live_at_this_time = []
+        print("trajectories at this time: ")
+        for tr in trajectories:
+            # printTrWithStats(tr)
+            # if(tr.X[0].t <= t_global and t_global <= tr.X[-1].t):
+            if(tr.X[0].t <= t_global and t_global <= tr.X[0].t + len(tr.X)-1):
+                # trajectories_that_live_at_this_time.append(tr)
+                # current tdet:
+                t = t_global-tr.X[0].t # offset time
+                tr_det_t:TDet = tr.X[t]
+                printTrWithStats(tr)
+                t_off = t_global - tr.origin.t
+                print(tr.X[t_off:t_off+10])
+                
+                # get features:
+                # patches = patchesInBB(pca_feat, tr_det_t.bb, xy_off=[pad_l, pad_u])
+                # patches_rp = roiPool(patches, use_2d=False)
+                
+                # draw things
+                if(SHOW_IMG):
+                    bb = bbResize(tr_det_t.bb, 1)
+                    tr.drawToSpace() # draw traj
+                    drawBoundingBox(dspace.map, bb, tr.color) # draw bb
+                    drawX(dspace.map, tr_det_t.x)
+                    # showInNamed("%d"%(tr.not_so_much_unique_id), patches_rp) # draw features
+
+        # draw gt:
+        if(SHOW_IMG):
+
+            if(GT13[t_global]): # draw gt
+                det = GT13[t_global][0]
+                bb = bbResize(det.bb, 3)
+                drawBoundingBox(dspace.map, bb, [0,50,205])
+            if(R13[t_global]): # draw result file det
+                det = R13[t_global][0]
+                bb = bbResize(det.bb, 2)
+                drawBoundingBox(dspace.map, bb, [100,50,205])
+            dspace.showSpace(draw_dets=False, draw_last_dets_bb=True, at_time=t_global, bb_color=[0,255,200])
+            dspace.clearSpace()
+        t_global = t_global +1
+    # ---------------------------------
+
+def main_d5():
+    print("[INFO] This is main_d5. To run main, set MAIN_N to 0.")
+    global COMPUTED_FLOW
+    global COMPUTED_FEAT
+
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('coin18') # coin18 sequence
+    T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('bird2') # bird2 sequence
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('got10k14') # bird2 sequence
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('chameleon20') # chameleon20 sequence
+    t_global = T_OFFSET
+    # init dspace
+    
+    # get frame:
+    # frame0 = getFrameAtI(t_global,FRAMES_PATH)
+    frame0 = np.zeros((1,1,3))
+    # print(frame0)
+    h, w, _ = np.shape(frame0)
+    dspace = DetectionSpace(h,w,time_offset=T_OFFSET, show_flow=False, disable_vis=True)
+    dspace.map = frame0
+    dspace.lastFrame = frame0.copy()
+    D13 = [[]]+readDetFile2(DETS_FILE, T_OFFSET)
+    # GT13: list[list[Detection]] = [[]]+readDetFile2(GT_PATH,T_OFFSET)
+    n = len(D13)-1 # all frames
+    print(n)
+    dspace.D = D13[t_global:]
+    # end init dspace
+    # is sorted!
+    # Q = [
+    #         [  5.612, -3.088, -3.088, -0.   , -0.   , -0.   , -0.   , -0.   , -0.   ],
+    #         [ -3.088,  5.422, -3.088, -0.   , -0.   , -0.   , -0.   , -0.   , -0.   ],
+    #         [ -3.088, -3.088,  5.147, -0.   , -0.   , -0.   , -0.   , -0.   , -0.   ],
+    #         [ -0.   , -0.   , -0.   ,  1.875, -0.   , -0.883, -0.782, -0.6  , -0.   ],
+    #         [ -0.   , -0.   , -0.   , -0.   ,  1.659, -0.995, -0.782, -0.   , -0.995],
+    #         [ -0.   , -0.   , -0.   , -0.883, -0.995,  1.471, -0.   , -0.   , -0.6  ],
+    #         [ -0.   , -0.   , -0.   , -0.782, -0.782, -0.   ,  1.304, -0.782, -0.   ],
+    #         [ -0.   , -0.   , -0.   , -0.6  , -0.   , -0.   , -0.782,  1.   , -0.   ],
+    #         [ -0.   , -0.   , -0.   , -0.   , -0.995, -0.6  , -0.   , -0.   ,  1.   ],
+    #     ]
+    
+    Q = [
+            [ 2.262, -1.231, -1.231, -0.94 , -0.813, -0.813],
+            [-1.231,  2.051, -1.231, -0.813, -0.813, -0.813],
+            [-1.231, -1.231,  2.733, -0.813, -0.813, -1.059],
+            [-0.94 , -0.813, -0.813,  2.267, -1.043, -1.043],
+            [-0.813, -0.813, -0.813, -1.043,  1.738, -1.043],
+            [-0.813, -0.813, -1.059, -1.043, -1.043,  2.148]
+        ]
+
+    v1 = solveQBP2(Q)
+    v2 = solveQBP(Q)
+    v3 = solveQBP3(Q)
+
+    print(v1)
+    print(v2)
+    print(v3)
+
+
+    return
+    # get trajectories:
+    file = read_tr_file('trs.p')
+    T_OFFSET, idTr_map = file
+    
+    # show trajectories in current time (and image features) ---
+    # print i-th tr
+    # trajectories = merged_merged
+    trajectories: list[Trajectory] = list(idTr_map.values())
+    nn = 15
+    # trajectories: list[Trajectory] = list(idTr_map)
+    # t0 = selectBestTrAroundDetAtTime2(trajectories, GT13[T_OFFSET][0].bb, time_add=nn)
+    t0 = selectBestTrAroundDetAtTime2(trajectories, GT13[0:nn])
+    path = [t0]+connectTrs(t0, trajectories)
+
+    for trr in trajectories:
+        first_d = trr.origin
+        t_i = first_d.t
+        if(t_i <= nn): # search only among few first frames
+            print("at time: %d"%t_i)
+            frame = getFrameAtI(t_i, FRAMES_PATH)
+            dspace.map = frame
+            dspace.lastFrame = frame.copy()
+            gtdet = GT13[t_i][0]
+            drawBoundingBox(dspace.map, bbResize(gtdet.bb,4), [t_i,0,255])
+            drawBoundingBox(dspace.map, first_d.bb, [t_i,255,0])
             
-
-    #         # current tdet:
-    #         tr_det_t:TDet = tr.X[t]
-    #         merged_merged[ii].drawToSpace() # draw traj
-    #         drawBoundingBox(dspace.map, tr_det_t.bb) # draw bb
-    #         drawX(dspace.map, tr_det_t.x)
-    #         dspace.showSpace(draw_dets=False, draw_last_dets_bb=False)
-    #         dspace.clearSpace()
-    #     j = (j + 1)%len(i)
-    
-    # t_global = t_global+1
-    # while True:
-    #     frame = getFrameAtI(t_global, FRAMES_PATH)
-    #     dspace.map = frame
-    #     dspace.lastFrame = frame.copy()
-
-    #     dspace.showSpace()
-    #     dspace.clearSpace()
-    #     t_global = t_global + 1
+            
+            for det in D13[t_i]:
+                drawBoundingBox(dspace.map, bbResize(det.bb,1), [t_i,100,255])
+            trr.detectionSpace = dspace
+            trr.drawToSpace()
+            dspace.showSpace(draw_dets=False, draw_last_dets_bb=False)
+            dspace.clearSpace()
 
     
 
 def read_tr_file(filename='trs.p'):
     PATH_TO_DET_FILE = 'tracker/'+filename
-    tr = None
-    with open(PATH_TO_DET_FILE, 'rb') as fd:
-        tr = pickle.load(fd)
-    return tr
-    # for t in tr:
-    #     printTrWithStats(t, t.not_so_much_unique_id)
+    return readTrajectoryFile(PATH_TO_DET_FILE)
     
 
 
 if __name__ == "__main__":
     # read_tr_file()
     
-    if(MAIN_DEB):
-        main_d()
-    elif(MAIN_QD):
-        main_qd()
+    if(MAIN_N == 1):
+        main_d1()
+    elif(MAIN_N == 2):
+        main_d2()
+    elif(MAIN_N == 25):
+        main_d25()
+    elif(MAIN_N == 3):
+        main_d3()
+    elif(MAIN_N == 4):
+        main_d4()
+    elif(MAIN_N == 5):
+        main_d5()
+    
     else:
         main()
 

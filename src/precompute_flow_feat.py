@@ -9,9 +9,9 @@ from pathlib import Path
 import warnings
 warnings.simplefilter('ignore')
 
+# CUDA_VISIBLE_DEVICES=2 python3 precompute_flow_feat.py --sequence 'LaSOT_bird-15' --seq_path '/home/gasper/Faks/3_letnik/diplomska/koda/data/frames/' --save_path '/home/gasper/Faks/3_letnik/diplomska/koda/data/' --feat
 # CUDA_VISIBLE_DEVICES=2 python3 precompute_flow_feat.py --sequence='LaSOT_bird-2' --save_path='/home/gasper/disk/Nedokumenti/Faks/precomputed/'
 # CUDA_VISIBLE_DEVICES=2 python3 precompute_flow_feat.py --sequence='LaSOT_bird-2'
-
 
 # flow, feat getters:
 COMPUTE_OR_GET_TEST = not True
@@ -70,10 +70,26 @@ def main():
     parser.add_argument('--small', action='store_true', help='use small model')
     parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
     parser.add_argument('--alternate_corr', action='store_true', help='use efficent correlation implementation')
+    
+    parser.add_argument('--flow', help='calculate flow (note: if none, both are calculated)', action='store_true', default=False)
+    parser.add_argument('--feat', help='calculate features (note: if none, both are calculated)', action='store_true', default=False)
     args = parser.parse_args()
+    
+    print(args)
+    calculate_mode = 0 # 0 - both, 1: flow-only, 2: frames-only
+    if(not (args.flow or args.feat) or (args.flow and args.feat)):
+        print("calculating flow and features")
+        calculate_mode = 0
+    elif(args.flow):
+        print("calculating flow only")
+        calculate_mode = 1
+    else:
+        print('calculating features only')
+        calculate_mode = 2
 
-
-    if(args.sequence is None): print("[warn] please specify sequence")
+    if(args.sequence is None or args.sequence==''):
+        print("[warn] please specify sequence with --sequence '<sequence>'")
+        return
     else: sequence = args.sequence
     if(args.seq_path is not None): seq_path = args.seq_path
     if(args.save_path is not None): save_path = args.save_path
@@ -93,52 +109,49 @@ def main():
     # this is for testing only
     # PRECOMPUTED_FLOW_PATH = "%s%s_flow/"%(seq_path, sequence)
     # PRECOMPUTED_FEAT_PATH = "%s%s_feat/"%(seq_path, sequence)
-    # -------------------------
-    
-
-    
-    Path(COMPUTED_FLOW).mkdir(parents=True, exist_ok=True)
-    Path(COMPUTED_FEAT).mkdir(parents=True, exist_ok=True)
     # ------
-
 
     # init raft, dinov2:
     n = len([name for name in os.listdir(FRAMES_PATH) if os.path.isfile(os.path.join(FRAMES_PATH, name))]) # number of files in path
 
+    # INIT OPTICAL FLOW
+    if(calculate_mode == 0 or calculate_mode == 1):
+        # of = OpticalFlow(args,frames_path=FRAMES_PATH, save_path=COMPUTED_FLOW) # save_flow = True
+        Path(COMPUTED_FLOW).mkdir(parents=True, exist_ok=True)
+        of = OpticalFlow(args,frames_path=FRAMES_PATH, save_path=COMPUTED_FLOW, no_print=True) # save_flow = True (because save_path is not none)
 
-    # INIT DSPACE
-    frame = getFrameAtI(t_global,FRAMES_PATH)
-    h,w,_ = np.shape(frame)
+    # INIT DINOV2
+    if(calculate_mode == 0 or calculate_mode == 2):
+        frame = getFrameAtI(t_global,FRAMES_PATH)
+        Path(COMPUTED_FEAT).mkdir(parents=True, exist_ok=True)
+        featureExt = FeatureExtractor(model_size='base')
+        featureExt.getFeatures(frame) # sets necessary offsets by computing first frame (could also do that differently)
 
-    # of = OpticalFlow(args,frames_path=FRAMES_PATH, save_path=COMPUTED_FLOW) # save_flow = True
-    of = OpticalFlow(args,frames_path=FRAMES_PATH, save_path=COMPUTED_FLOW, no_print=True) # save_flow = True
-    featureExt = FeatureExtractor(model_size='base')
-    featureExt.getFeatures(frame) # sets necessary offsets by computing first frame (could also do that differently)
-
-
-    # for i in range(n):
-    #     pass
     VISUALIZE = False
-    # print("progress:")
     nn = n
-    # for i in range(n):
-    for i in range(nn):
-        frame = getFrameAtI(t_global, FRAMES_PATH)
-        flow=computeOrGetFlowAtI(t_global, of)
-        feat=computeOrGetPCAFeaturesAtI(t_global, frame, featureExt, True)
+    try:
+        for i in range(nn):
+            if(calculate_mode == 0 or calculate_mode == 1):
+                flow=computeOrGetFlowAtI(t_global, of)
+            
+            if(calculate_mode == 0 or calculate_mode == 2):
+                frame = getFrameAtI(t_global, FRAMES_PATH)
+                feat=computeOrGetPCAFeaturesAtI(t_global, frame, featureExt, True)
 
-        # visualize, if:
-        if(VISUALIZE):
-            print("t_global: %d"%(t_global))
-            showInNamed("frame", frame)
-            flow_img = flow2img(flow)
-            showInNamed("flow", flow_img)
-            showInNamed("feat", feat)
-            cv.waitKey(0)
-        
-        print("frames: %d/%d (%.0f%%)"%(t_global, nn, (float(t_global)/float(nn))*100))
-        
-        t_global = t_global + 1
+            # visualize, if:
+            if(VISUALIZE):
+                print("t_global: %d"%(t_global))
+                showInNamed("frame", frame)
+                flow_img = flow2img(flow)
+                showInNamed("flow", flow_img)
+                showInNamed("feat", feat)
+                cv.waitKey(0)
+            
+            print("frames: %d/%d (%.0f%%)"%(t_global, nn, (float(t_global)/float(nn))*100))
+            
+            t_global = t_global + 1
+    except KeyboardInterrupt:
+        print('da da da')
     print()
         
 

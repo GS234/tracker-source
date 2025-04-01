@@ -47,7 +47,7 @@ class ImagePadder:
         self.patch_h = (h+h_pad)//patch_size
         self.patch_w = (w+w_pad)//patch_size
 
-        print("[padder] ",h, w," -> ", (h+h_pad), (w+w_pad))
+        # print("[padder] ",h, w," -> ", (h+h_pad), (w+w_pad))
     
     def im_pad(self, im, mode='reflect'):
         # return np.pad(im, pad_width=[(self.pad_u,self.pad_d),(self.pad_l,self.pad_r),(0,0)]) # h, w, rgb
@@ -81,6 +81,7 @@ class FeatureExtractor():
 
         # init backbone model
         # self.model = torch.hub.load(repo_or_dir="facebookresearch/dinov2", model=backbone_name, patch_size=patch_size)
+        # self.model = torch.hub.load(repo_or_dir="/home/gasper/python/dinov2/facebookresearch_dinov2_main/", source='local', trust_repo=True, model=backbone_name, patch_size=patch_size)
         self.model = torch.hub.load(repo_or_dir="/home/gasper/.cache/torch/hub/facebookresearch_dinov2_main/", source='local', trust_repo=True, model=backbone_name, patch_size=patch_size)
         self.model.to(DEVICE)
         self.model.eval()
@@ -116,6 +117,7 @@ class FeatureExtractor():
             # p_features: torch.Tensor = self.model(image2.to(to_device))
             # print(p_features)
             feature_dict: torch.Tensor = self.model.forward_features(image2.to(to_device))
+            # feature_dict: torch.Tensor = self.model.forward_features(image2)
             # print(feature_dict)
             # if(to_device == 'cuda'):
             #     features = features.to('cpu').numpy() # convert it to cpu
@@ -144,8 +146,8 @@ def patchesInBB(patches_img, bb, xy_off=[0,0], patch_size:int = 14):
     patch_bb_w = bb[3]//patch_size + (1 if(int(bb[3])%patch_size != 0) else 0)
     
     
-    print("patches in bb, x: ",bb[0],patch_ul_x, patch_bb_h)
-    print("patches in bb, y: ",bb[1],patch_ul_y, patch_bb_w)
+    # print("patches in bb, x: ",bb[0],patch_ul_x, patch_bb_h)
+    # print("patches in bb, y: ",bb[1],patch_ul_y, patch_bb_w)
 
     return patches_img[patch_ul_y:patch_ul_y+patch_bb_w, patch_ul_x:patch_ul_x+patch_bb_h]
     # return patches_img[patch_ul_x:patch_ul_x+patch_bb_h, patch_ul_y:patch_ul_y+patch_bb_w]

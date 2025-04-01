@@ -4,7 +4,7 @@ from Trajectory import Trajectory
 from Detection import Detection, TDet
 import cv2 as cv
 from helper_func import * # helper functions
-from collections import deque # for queue (de - double ended)
+# from collections import deque # for queue (de - double ended)
 import math
 
 
@@ -400,9 +400,6 @@ class DetectionSpace:
         # a,b = self.estimateNext2(d_last, d_pred, next_detections, next_detections_probs, dt) # return same thing as estimateNext2 would, for now
         return (d_t1,x_p)
         
-        
-
-
     # !!! POMEMBNO [TODO - fix/adjust/modify/test]
     # estimates next point in trajectory given collected detections and prediction (x_t -> x_t+1)
     def estimateNext(self, t:Trajectory, dt=1) -> Detection:
@@ -486,8 +483,8 @@ class DetectionSpace:
     
     # ------------------------------
     
+    # those methods are kinda redundant, there is already one in helper_func (these are here just for compatibility)
     # method builds trajectory interatction matrix
-    # [TODO] - should be tested, needs refactoring (move some things to separate methods)
     def buildQBPMatrix(self, tr_list: list[Trajectory], e1: float = 1.0, e2: float = 1.0):
         print("this is build QBP (og)")
         # 1. calculate q_ii terms ("merit terms")
@@ -675,86 +672,84 @@ class DetectionSpace:
         #     q_ij = tr_i.getConnectionCost(tr)
 
 
-    
+    # # method solves qbp (returns list of selected hypotheses)
+    # def solveQBP(self, Q):
+    #     # 1. init indicator vector
+    #     m, n = np.shape(Q)
 
-    # method solves qbp (returns list of selected hypotheses)
-    def solveQBP(self, Q):
-        # 1. init indicator vector
-        m, n = np.shape(Q)
-
-        v = np.zeros((m,1))
-        incIndVec(v, rev=True) # start with 1 selected, not with 0
+    #     v = np.zeros((m,1))
+    #     incIndVec(v, rev=True) # start with 1 selected, not with 0
         
 
-        # 2. find maximum by calculating all possible combinations (brute force method, should use solveQBP2)
-        maximum = 0
-        max_v = 1
-        i=0
-        for i in range((1<<(m))-1):
-            current = np.dot(np.dot(v.T, Q), v)
-            # print(current)
-            # print(current, end="", flush=True)
-            if(current > maximum):
-                maximum = current
-                max_v = i+1
-            incIndVec(v, rev=True)
-        print(maximum, "n_iter: ",i)
-        return (binArrFromInt(max_v, m), maximum)
+    #     # 2. find maximum by calculating all possible combinations (brute force method, should use solveQBP2)
+    #     maximum = 0
+    #     max_v = 1
+    #     i=0
+    #     for i in range((1<<(m))-1):
+    #         current = np.dot(np.dot(v.T, Q), v)
+    #         # print(current)
+    #         # print(current, end="", flush=True)
+    #         if(current > maximum):
+    #             maximum = current
+    #             max_v = i+1
+    #         incIndVec(v, rev=True)
+    #     print(maximum, "n_iter: ",i)
+    #     return (binArrFromInt(max_v, m), maximum)
     
-    # multibranch-ascent qbp solver (seems to work fine, for now):
-    # basically bfs over specifically generated 0-1 space + some special conditions (see working notes)
-    def solveQBP2(self, Q: np.array, debug=False):
-        # 1. init variables
-        n_el,_ = np.shape(Q) # length of vector - number of elements
-        v = np.zeros(n_el).astype(np.uint8)
+    # # multibranch-ascent qbp solver (seems to work fine, for now):
+    # # basically bfs over specifically generated 0-1 space + some special conditions (see working notes)
+    # def solveQBP2(self, Q: np.array, debug=False):
+    #     # 1. init variables
+    #     n_el,_ = np.shape(Q) # length of vector - number of elements
+    #     v = np.zeros(n_el).astype(np.uint8)
 
-        # max:
-        D_max = 0 # previous maximum
+    #     # max:
+    #     D_max = 0 # previous maximum
 
-        depth = 0 # current depth, each new node gets value depth+1
-        local_max_d = 0 # local max D, when reached new depth, update global with that
-        local_max_v = v
+    #     depth = 0 # current depth, each new node gets value depth+1
+    #     local_max_d = 0 # local max D, when reached new depth, update global with that
+    #     local_max_v = v
 
-        # init queue:
-        queue = deque([(v,0,depth)]) # (v, n, d_current_max)
+    #     # init queue:
+    #     queue = deque([(v,0,depth)]) # (v, n, d_current_max)
 
-        # 2. main loop:
-        n_iter = 0
-        while((len(queue) != 0)):
-            V, n, current_depth = queue.popleft()
-            # if reached new depth: update global maximum with that of current depth
-            if(current_depth > depth):
-                depth = current_depth
-                D_max = local_max_d
-                if(debug):
-                    print("depth: ", depth, " new max: ", D_max) # debug stuff
+    #     # 2. main loop:
+    #     n_iter = 0
+    #     while((len(queue) != 0)):
+    #         V, n, current_depth = queue.popleft()
+    #         # if reached new depth: update global maximum with that of current depth
+    #         if(current_depth > depth):
+    #             depth = current_depth
+    #             D_max = local_max_d
+    #             if(debug):
+    #                 print("depth: ", depth, " new max: ", D_max) # debug stuff
 
-            # calculate score of current selection:
-            d_current = np.dot(np.dot(V, Q),V)
-            if(debug):
-                print(V, ", D: ", d_current) # debug stuff
+    #         # calculate score of current selection:
+    #         d_current = np.dot(np.dot(V, Q),V)
+    #         if(debug):
+    #             print(V, ", D: ", d_current) # debug stuff
             
-            # check if current is better than any other from upper level, if it is, update&generate, else skip
-            if(d_current < D_max):
-                continue # discontinue branch
+    #         # check if current is better than any other from upper level, if it is, update&generate, else skip
+    #         if(d_current < D_max):
+    #             continue # discontinue branch
 
-            # update current depth maximum, if exceeded
-            if(d_current >= local_max_d):
-                local_max_d = d_current
-                local_max_v = V.copy()
+    #         # update current depth maximum, if exceeded
+    #         if(d_current >= local_max_d):
+    #             local_max_d = d_current
+    #             local_max_v = V.copy()
 
-            # generate next nodes, put them into queue
-            for i in range(n_el-n):
-                v_i = n+i
-                V[v_i] = 1
-                queue.append((V.copy(), v_i+1, depth+1))
-                V[v_i] = 0
-            n_iter += 1
+    #         # generate next nodes, put them into queue
+    #         for i in range(n_el-n):
+    #             v_i = n+i
+    #             V[v_i] = 1
+    #             queue.append((V.copy(), v_i+1, depth+1))
+    #             V[v_i] = 0
+    #         n_iter += 1
         
-        if(debug):
-            print("n_iter: " + str(n_iter), " n_combinations: ", (1 << n_el)) # some stats
-        # return (v_max, D_max)
-        return (local_max_v, local_max_d)
+    #     if(debug):
+    #         print("n_iter: " + str(n_iter), " n_combinations: ", (1 << n_el)) # some stats
+    #     # return (v_max, D_max)
+    #     return (local_max_v, local_max_d)
     
 
 # method builds trajectory interatction matrix - backup

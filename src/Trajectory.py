@@ -889,6 +889,7 @@ class Trajectory:
         # score=self.getScore2()
         # score = score + sum((1.0-E2) + E2*np.log(list(self.T2.values())))
         
+        # [TODO]: also use visual score
         iou_scores = np.array(list(self.T2.values()))[:,0]
         score = score + sum(iou_scores)
         # print(self.id, "this is getscoreii, trajectories: ",self.T2.keys())
@@ -913,6 +914,7 @@ class Trajectory:
         for tr_i in tr_intersect:
             # int_cost = sum(tr_i.D2.values())+tr_l.T2[tr_i] ## !!! fix
             int_cost = tr_l.T2[tr_i][0] + (1.0-tr_l.T2[tr_i][0])
+            # int_cost = tr_l.T2[tr_i][0] + (1.0-tr_l.T2[tr_i][1]) #? what happened to vec_score?
             # int_cost = tr_l.T2[tr_i][0]
             # S_err = S_err + ((1.0-E2) +  E2*np.log(int_cost))
             S_err = S_err + int_cost

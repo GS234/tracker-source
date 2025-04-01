@@ -9,7 +9,8 @@ import traceback
 import os
 import glob
 from FeatureExtractor import roiPool, patchesInBB
-from Detection import Detection
+from Detection import Detection, TDet
+from collections import deque # for queue (de - double ended) (solveQBP2)
 
 import sys
 sys.path.append('../RAFT/core') # raft stuff
@@ -451,7 +452,7 @@ def dropRedundant(tr_list:list[Trajectory], red_level=0):
     return new_l
 
 # bounding box deteciton to Detection - generates Detection object with coordinates of center of a bounding box
-def bbDet2Det(bb: tuple, t: int = 0):
+def bbDet2Det(bb: list[float], t: int = 0):
     x, y = bb[0]+bb[2]/2,bb[1]+bb[3]/2
     return Detection([x,y], t=t, bb=bb)
 
@@ -629,6 +630,12 @@ def getFeaturesFromFeatureMapAndPadding2(det:Detection, feature_map_and_featExt)
 def bb2str(bb):
     return "%6.2f,%6.2f,%6.2f,%6.2f"%(bb[0],bb[1],bb[2],bb[3])
 
+# function resizes bounding box (if off=1, then new bb is outline of old one)
+def bbResize(bb: list[int], ext_bb_off: int = 1):
+    ext_bb = list(np.array(bb[0:2])+ext_bb_off)+list(np.array(bb[2:])-(ext_bb_off*2))
+    return ext_bb
+
+
 # gets intersection bounds of bounding boxes
 def getBBIntersectionBounds(d1: Detection, d2: Detection):
     tl_a = np.array(d1.bb[0:2])
@@ -709,8 +716,85 @@ def buildQBPMatrixX(tr_list: list[Trajectory], type=1):
         m = m+1
     return Q
 
+# qbp solvers:
+# method solves qbp (returns list of selected hypotheses)
+def solveQBP(Q):
+    # 1. init indicator vector
+    m, n = np.shape(Q)
 
+    v = np.zeros((m,1))
+    incIndVec(v, rev=True) # start with 1 selected, not with 0
+    
 
+    # 2. find maximum by calculating all possible combinations (brute force method, should use solveQBP2)
+    maximum = 0
+    max_v = 1
+    i=0
+    for i in range((1<<(m))-1):
+        current = np.dot(np.dot(v.T, Q), v)
+        # print(current)
+        # print(current, end="", flush=True)
+        if(current > maximum):
+            maximum = current
+            max_v = i+1
+        incIndVec(v, rev=True)
+    print(maximum, "n_iter: ",i)
+    return (binArrFromInt(max_v, m), maximum)
+
+# multibranch-ascent qbp solver (seems to work fine, for now):
+# basically bfs over specifically generated 0-1 space + some special conditions (see working notes)
+def solveQBP2(Q: np.array, debug=False):
+    # 1. init variables
+    n_el,_ = np.shape(Q) # length of vector - number of elements
+    v = np.zeros(n_el).astype(np.uint8)
+
+    # max:
+    D_max = 0 # previous maximum
+
+    depth = 0 # current depth, each new node gets value depth+1
+    local_max_d = 0 # local max D, when reached new depth, update global with that
+    local_max_v = v
+
+    # init queue:
+    queue = deque([(v,0,depth)]) # (v, n, d_current_max)
+
+    # 2. main loop:
+    n_iter = 0
+    while((len(queue) != 0)):
+        V, n, current_depth = queue.popleft()
+        # if reached new depth: update global maximum with that of current depth
+        if(current_depth > depth):
+            depth = current_depth
+            D_max = local_max_d
+            if(debug):
+                print("depth: ", depth, " new max: ", D_max) # debug stuff
+
+        # calculate score of current selection:
+        d_current = np.dot(np.dot(V, Q),V)
+        if(debug):
+            print(V, ", D: ", d_current) # debug stuff
+        
+        # check if current is better than any other from upper level, if it is, update&generate, else skip
+        if(d_current < D_max):
+            continue # discontinue branch
+
+        # update current depth maximum, if exceeded
+        if(d_current >= local_max_d):
+            local_max_d = d_current
+            local_max_v = V.copy()
+
+        # generate next nodes, put them into queue
+        for i in range(n_el-n):
+            v_i = n+i
+            V[v_i] = 1
+            queue.append((V.copy(), v_i+1, depth+1))
+            V[v_i] = 0
+        n_iter += 1
+    
+    if(debug):
+        print("n_iter: " + str(n_iter), " n_combinations: ", (1 << n_el)) # some stats
+    # return (v_max, D_max)
+    return (local_max_v, local_max_d)
 
 # solveQBP3
 def solveQBP3(Q):
@@ -846,22 +930,157 @@ shapes = {
 
 
 
-# if __name__ == "__main__":
-#     # filename = "../data/detections/LaSOT_car-17.txt"
-#     # readDetFile(filename=filename)
-#     print(shapes['o'])
-#     print(shapes['x'])
+def mergeLists(l1: list[TDet], l2: list[TDet]):
+    list_merged: list[TDet] = []
+    if(l1 and l2):
+        l1_l = len(l1)
+        l2_l = len(l2)
+        l1_i, l2_i = 0,0
+        while(l1_i < l1_l or l2_i < l2_l):
+            if(l1_i < l1_l and l2_i<l2_l):
+                a = l1[l1_i]
+                b = l2[l2_i]
 
-#     n=11
-#     map = np.zeros((n,n, 3)).astype(np.uint8)
+                if(b.t <= a.t):
+                    list_merged.append(b)
+                    l2_i = l2_i+1
+                    l1_i = l1_i+1
+                else:
+                    list_merged.append(a)
+                    l1_i = l1_i+1
+            elif(l1_i == l1_l):
+                b = l2[l2_i]
+                list_merged.append(b)
+                l2_i = l2_i+1
+            elif(l2_i == l2_l):
+                a = l1[l1_i]
+                list_merged.append(a)
+                l1_i = l1_i+1
+    return list_merged
 
-#     drawO(map, [5,5], [0,255,255])
-#     # drawX(map, [5,5], [250,200,125])
+# file output:
+# function prints path (list of trajectories) to file
+# n: total number of frames
+def path2File(path: list[Trajectory], n:int, results_path):
+    with open(results_path+"results.txt", 'w') as fp: # fp: file pointer?
+        bb_total = 0
+        for i in range(len(path)):
+            if(i != 0):
+                t_end = path[i-1].X[-1].t
+                t_begin = path[i].origin.t
+                t_diff = t_begin - t_end
+                t_pad = t_diff-1
+                
+                if(i-1 == 0): # if we are writing first one
+                    tr_string, n_bb = path[i-1].tr2bbStr2(t_pad, different_first_line=True)
+                else:
+                    tr_string, n_bb = path[i-1].tr2bbStr2(t_pad)
+                fp.write(tr_string)
+               
+                bb_total = bb_total + n_bb
+
+            # also add last one
+            if(i == len(path)-1):
+                # pad last one to end of sequence:
+                if(i == 0): # in case this was the only tr in path
+                    tr_string, n_bb = path[i].tr2bbStr2(0, different_first_line=True)
+                else:
+                    tr_string, n_bb = path[i].tr2bbStr2(0)
+                fp.write(tr_string)
+                bb_total = bb_total + n_bb
+                t_pad = n - bb_total
+                tr_string = path[i].lastNtimes(t_pad)
+                fp.write(tr_string)
+                bb_total = bb_total + t_pad
+
+# function creates results.txt file from path (path is list of trajectories) - writes bounding boxes into file
+def path2File2(path: list[Trajectory], n:int, results_path="./", filename="results.txt"):
+    t_off = 1 # assume T_OFFSET as 1
+    path_list = path2list(path, n, t_off)
+    if(path_list):
+        # print(path[0].X)
+        with open(results_path+filename, 'w') as fp: # fp: file pointer?
+            for i in range(len(path_list)):
+                td_at_i = path_list[i]
+                if(i == 0):
+                    fp.write("1\n")
+                else:
+                    if(td_at_i.bb[3]==0):
+                        print(td_at_i.bb)
+                    fp.write(bb2str(td_at_i.bb)+"\n")
+    else:
+        print("[WARN] <path2File2> path list is empty, file not created")
+
+# function merges list of trajectories to list of detections, which can then be written to file
+def path2list(tr_list: list[Trajectory], n_all:int, t_offset:int):
+    id_idx = {} # map: tr id -> X index
+    path_x = {} # also map: better idea
+    t_global = t_offset
+    path_x_id = {} # debug map: t_global -> tr_id
+    while (t_global <= n_all):
+        path_x[t_global] = None # init it
+        path_x_id[t_global] = None # init it
+        # print("t: ", t_global)
+        # print("trajectories at this time: ")
+
+        for tr in tr_list:
+            # if(tr.X[0].t <= t_global and t_global <= tr.X[0].t + len(tr.X)-1):
+            if(tr.X[0].t <= t_global and t_global <= tr.X[-1].t):
+                # print(tr)
+                # every trajectory has its own index (at which point it is currently)
+                tr_id_idx = 0
+                if(not tr.id in id_idx):
+                    id_idx[tr.id] = 0
+                else:
+                    tr_id_idx = id_idx[tr.id]
+                
+                if(tr.X[tr_id_idx].t < t_global):
+                    while(tr.X[tr_id_idx].t < t_global):
+                        tr_id_idx = tr_id_idx+1
+                    # update possibly changed tr_id_idx
+                    id_idx[tr.id] = tr_id_idx
+                tr_td = tr.X[tr_id_idx]
+                if(tr_td.t == t_global):
+                    # we have point that is at this time, add it:
+                    path_x[t_global] = tr.X[tr_id_idx]
+                    path_x_id[t_global] = tr.id
+                    # print("%d: adding point from %d"%(t_global, tr.id))
+
+        # if there is no trajectory at this time, then add previous detection
+        t_global = t_global + 1
+        # input("continue?")
+    # print(path_x_id)
+
+    first_non_null_encounter = False
+    last_non_null_td = None
+    for i in range(len(path_x)):
+        t_global = t_offset+i
+
+        td_at_i = path_x[t_global]
+        if(td_at_i is not None):
+            if(not first_non_null_encounter):
+                first_non_null_encounter = True
+                # we found first non null element, fill back:
+                for j in range(i):
+                    t_local = t_offset+j
+                    path_x[t_local] = TDet(td_at_i.x, t_local)
+                    path_x[t_local].bb = td_at_i.bb
+            last_non_null_td = td_at_i
+        else:
+            if(last_non_null_td is not None):
+                # copy it, increase time
+                path_x[t_global] = TDet(last_non_null_td.x,t_global)
+                path_x[t_global].bb = last_non_null_td.bb
+
+    # print("path:")
+    path_list = []
+    if(first_non_null_encounter):
+        for i in path_x:
+            path_list.append(path_x[i])
+    return path_list
+# -------------------------
+
+if __name__ == '__main__':
+    pass
     
-
-
-#     cv.namedWindow("map", cv.WINDOW_NORMAL)
-#     cv.resizeWindow("map", 500,500)
-#     cv.imshow("map",map)
-#     cv.waitKey(0)
 

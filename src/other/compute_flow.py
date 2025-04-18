@@ -9,6 +9,7 @@ import torch
 from PIL import Image
 import time
 import pickle
+import cv2 as cv
 
 from raft import RAFT
 from utils.utils import InputPadder
@@ -27,7 +28,7 @@ def load_image(imfile):
 
 def computeFlow(args):
     model = torch.nn.DataParallel(RAFT(args))
-    model.load_state_dict(torch.load(args.model))
+    model.load_state_dict(torch.load(args.model, weights_only=True))
 
     model = model.module
     model.to(DEVICE)
@@ -75,5 +76,14 @@ if __name__ == '__main__':
     args = parser.parse_args()
     # print(args)
 
+    if(args.model is None):
+        args.model = "../../RAFT/models/raft-things.pth"
+
     computeFlow(args)
+
+    flows: any
+    with open('./flowEst2.p', 'rb') as fp:
+        flows = pickle.load(fp)
+    print(flows)
+    
     

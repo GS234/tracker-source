@@ -45,6 +45,7 @@ class DetectionSpace:
         self.disable_vis = disable_vis # to disable visualization (to run on a server without graphic output)
         if(not self.disable_vis):
             scale_f = 1.5
+            scale_f = 6.0
             winsize = ((np.array(self.hw)+np.array([40,0]))*scale_f).astype(np.int32)
             # dspace - main window
             self.dspace_winname = "detection space"
@@ -107,6 +108,12 @@ class DetectionSpace:
         if((I_x > 0) and (I_y > 0)):
             return True
         return False
+    
+    def isWithinBounds(self, x:list[int]):
+        x_x = x[0] # <-0+>
+        x_y = x[1] # A-0+V
+
+        return (x_x >= 0 and x_x < self.hw[1]) and (x_y >= 0 and x_y < self.hw[0])
 
     # !!! POMEMBNO:
     # method calculates probability (score) of detection 
@@ -130,6 +137,23 @@ class DetectionSpace:
             color_model_prob = 1 # [TODO]
             ret_val = ret_val*color_model_prob
         return ret_val
+    
+    # method calculates probability (score) of detection (iou + deep features)
+    # prob = a*IoU + (1-a)*feat_sim
+    # !!! [MOVED TO HELPER FUNC, THIS IS FOR BACKWARD COMPATIBILITY ONLY]
+    def getProb4(self, d:Detection, td:TDet, a=1.0) -> float:
+        return getProbIV(d, td, a)
+        # iou_prob = IoU(d, td)
+        # visual_prob = 1
+
+        # if(td.visual_feat is not None and d.visual_feat is not None):
+        #     visual_prob = getVisualSimilarity(td.visual_feat, d.visual_feat)
+        #     print("[getprob4] visual similarity score: %6.2f"%(visual_prob)) # [TODO]: test if scores make any sense at all
+        # elif(not math.isclose(1,a)):
+        #     print("[warn] visual score could not be calculated. Assuming 1 (totally similar)")
+        # # visual_prob = getVisualSimilarity(feat1, feat2)
+        # ret_val = a*iou_prob + (1-a)*visual_prob
+        # return ret_val
         
 
     # methods to calculate probability of motion model and color model (used in getProb, getProb2)
@@ -168,7 +192,7 @@ class DetectionSpace:
         return ((x <= EXIT_ZONE_OFFSET) or (x >= self.hw[1]-EXIT_ZONE_OFFSET) or (y <= EXIT_ZONE_OFFSET) or (y >= self.hw[0]-EXIT_ZONE_OFFSET))
     # ----------------------------------------------------------------------------------------
 
-    def showSpace(self, det_color=[0,0,0], draw_dets=True, at_time=-1, draw_last_dets_bb=True, bb_color=None, dspace_winname=None):
+    def showSpace(self, det_color=[0,0,0], draw_dets=True, at_time=-1, draw_last_dets_bb=True, bb_color=None, dspace_winname=None, det_center_shape='x'):
         if(at_time != -1):
             at_time = at_time-self.time_offset
             if(at_time < 0):
@@ -203,10 +227,12 @@ class DetectionSpace:
             if(draw_last_dets_bb):
                 for d in dets_at_t: # draw bounding boxes around last detections
                     drawBoundingBox(self.map, d.bb, color=bb_color)
-                    drawX(self.map, d.x)
+                    drawShape(getShape(det_center_shape),self.map, d.x)
+                    # drawX(self.map, d.x)
                     if(self.show_flow):
                         drawBoundingBox(self.flow_img, d.bb)
-                        drawX(self.flow_img, d.x)
+                        # drawX(self.flow_img, d.x)
+                        drawShape(getShape(det_center_shape),self.map, d.x)
                         # draw also line in which direction is region moving
                         
 
@@ -287,16 +313,17 @@ class DetectionSpace:
         next_detections_probs = [] # weights: sampled from distribution (bivariate normal dist, see Detection.getProb())
         t = t - self.time_offset # to fix indexing of self.D
 
-        # print(self.D)
-        # print(t)
-
         # drawBoundingBox(self.map, td.bb, [0,255,255]) # yellow rect is current (debug visualization)
+
+        print("next dets:")
         if(t < len(self.D) and t >= 0): # check only if has detections in this layer (and not before 0)
             for d_i in self.D[t]:
                 if(self.isWithinBB(d_i, td)): # 2x isti izracun, zal (na racun preglednosti)
+                    print("- %d: %s"%(d_i.id, str(d_i)))
                     # drawBoundingBox(self.map, d_i.bb, [0,255,0]) # debug
                     next_detections.append(d_i) # store detections, for now
-                    detection_prob = self.getProb3(d_i, td, use_iou=use_iou, use_color=use_color)
+                    # detection_prob = self.getProb3(d_i, td, use_iou=use_iou, use_color=use_color)
+                    detection_prob = self.getProb4(d_i, td, a=1.0)
                     next_detections_probs.append(detection_prob) # get probability score from nearby point
                 else:
                     pass
@@ -603,11 +630,6 @@ class DetectionSpace:
             m = m+1
         return Q
     
-    # method builds trajectory interatction matrix
-    def buildQBPMatrix3(self, tr_list: list[Trajectory]):
-        # print("this is build QBP 3")
-        return self.buildQBPMatrixX(tr_list, type=1)
-    
     # !MOVED TO HELPER_FUNC!!
     # method builds trajectory interatction matrix
     # type 1: detection-wise, type 2: trajectory-wise
@@ -645,6 +667,10 @@ class DetectionSpace:
         #     m = m+1
         # return Q
     
+    # method builds trajectory interatction matrix
+    def buildQBPMatrix3(self, tr_list: list[Trajectory]):
+        # print("this is build QBP 3")
+        return self.buildQBPMatrixX(tr_list, type=1)
     
     # method builds interaction matrix to connect trajectories
     def buildQBPMatrixII(self, tr_list: list[Trajectory]):

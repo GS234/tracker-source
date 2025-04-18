@@ -2,7 +2,7 @@ from helper_func import *
 from DetectionSpace import DetectionSpace
 from Trajectory import Trajectory
 from OpticalFlow import OpticalFlow
-from FeatureExtractor import FeatureExtractor, roiPool, patchesInBB, getFeaturesPca
+from FeatureExtractor import FeatureExtractor, roiPool, patchesInBB, getFeaturesPca, ImagePadder
 from Detection import Detection, TDet, TDet_from_Detection
 from TargetDet import TargetDet
 import cv2 as cv
@@ -36,7 +36,9 @@ DRAW_DETS=False
 # MAIN_N=2 # 0: main, 1: main_d1, 2: main_d2, ...
 # MAIN_N=25 # 0: main, 1: main_d1, 2: main_d2, ...
 # MAIN_N=5 # 0: main, 1: main_d1, 2: main_d2, ...
+# MAIN_N=1 # 0: main, 1: main_d1, 2: main_d2, ...
 MAIN_N=0 # 0: main, 1: main_d1, 2: main_d2, ...
+# MAIN_N=2 # 0: main, 1: main_d1, 2: main_d2, ...
 SAVE_TRAJECTORIES= True # switch to save trajectories on every selection step for vizualization/debug purposes
 # EXT_THR=10 # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory (number of relative holes, essentially))
 EXT_THR=5 
@@ -84,6 +86,7 @@ def computePCAFeaturesAtItest(i:int, save_feat=False):
 
 # function sets frame and flow to detection space and returns frame (get features function needs this)
 def setFrameFlowAtI(dspace: DetectionSpace, i: int, optical_flow_gen: OpticalFlow = None, frames_path=""):
+    # print("fpath: %s"%frames_path)
     # set new frame
     frame = getFrameAtI(i,frames_path)
     dspace.lastFrame = frame.copy()
@@ -99,7 +102,8 @@ def setFrameFlowAtI(dspace: DetectionSpace, i: int, optical_flow_gen: OpticalFlo
     
     #  also set flow to this image
     if(i >= 1):
-        flow_to = getFlowAtI(i-1, COMPUTED_FLOW)
+        # flow_to = getFlowAtI(i-1, COMPUTED_FLOW)
+        flow_to = computeOrGetFlowAtI(i, optical_flow_gen=optical_flow_gen)
         dspace.flow_to = flow_to
     else: # there is no flow into first frame
         h,w = dspace.hw
@@ -133,6 +137,7 @@ def nNonzero(q_column):
     return n_nonzero
 
 # function gets list of trajectories, builds Q, analyzes it, and returns new Q and trajectory list with trajectories, that are selected
+# returns (simple, all_else)
 def analyzeTrsWithQ(tr_list: list[Trajectory], type=1):
     # 1. build Q:
     Q = buildQBPMatrixX(tr_list, type=type)
@@ -311,8 +316,12 @@ def mergeTrajectories2(tr_list:list[tuple[Trajectory, float, float]]) -> Traject
 
     min_id = 0
     merge_scores = []
+    # print("merging:")
+    # print([a[0].not_so_much_unique_id for a in tr_list])
     for p in tr_list:
         t = p[0]
+        # print(t)
+        # printTrWithStats(t)
         score = p[1]
         # print(p)
         score2 = p[2] # penalty is calculated from this
@@ -320,34 +329,58 @@ def mergeTrajectories2(tr_list:list[tuple[Trajectory, float, float]]) -> Traject
         if(t_merged is None):
             t_merged = t.getCopy() # origin is set here, and is correct
             min_id = t.not_so_much_unique_id
-        else:
-            # must do: X, D2
-            # should do: holes, holes_ref, term, color
-            t.X[0].color = [10,10,150]
-            # t_merged.X = t_merged.X + ext_dets + t.X
-            # merge_lists1 = mergeLists(t_merged.X[-2:], ext_dets)
-            # merge_lists2 = mergeLists(merge_lists1, t.X)
-            # t_merged.X = t_merged.X[:-2] + merge_lists2
-            
-            tx_add = t.X
-            if(t.X[0].t == t_merged.X[-1].t):
-                t_merged.X[-1] = t.X[0]
-                tx_add = t.X[1:]
-            
-            # t_merged.X = t_merged.X + ext_dets + t.X
-            t_merged.X = t_merged.X + ext_dets + tx_add
+        else:    
+            t.X[0].color = [10,10,150] # red color to mark merge gap
+            if(t.X[0].t < t_merged.X[-1].t):
+                # print("we have overlap")
+                if(isOverlapValid(t_merged, t)):
+                    # print("overlap merge")
+
+                    # 1. find first that overlaps
+                    i = len(t_merged.X)-1
+                    times_of_overlap = set()
+                    while(t_merged.X[i].t >= t.X[0].t):
+                        times_of_overlap.add(t_merged.X[i].t)
+                        i = i-1
+                    new_x = t_merged.X[0:i+1] + t.X
+                    t_merged.X = new_x # new X
+                    # print(times_of_overlap)
+
+                    # 2. get dets from D2 that have that time
+                    dets_overlap = set()
+                    for d in t_merged.D2.keys():
+                        if(d.t in times_of_overlap):
+                            dets_overlap.add(d)
+                    
+                    # 3. new D2 (is already set, just unset scores):
+                    for d in dets_overlap:
+                        # print("setting %.2f to %.2f (of %s)"%(t_merged.D2[d],0.0, str(d)))
+                        t_merged.D2[d] = 0.0 # remove score from overlaping
 
 
+                else:
+                    print("invalid case, skipping")
+                    continue
+            else:
+                tx_add = t.X
+                if(t.X[0].t == t_merged.X[-1].t):
+                    t_merged.X[-1] = t.X[0]
+                    tx_add = t.X[1:]
+                
+                # t_merged.X = t_merged.X + ext_dets + t.X
+                t_merged.X = t_merged.X + ext_dets + tx_add
 
-            t_merged.D2 = {**t_merged.D2, **t.D2}
-            t_merged.T2 = {**t_merged.T2, **t.T2} # also merge T2
+            # all else:
+            t_merged.D2 = {**t_merged.D2, **t.D2} # merge D2 (detection -> score (float))
+            t_merged.T2 = {**t_merged.T2, **t.T2} # also merge T2 (Trajectory -> [score, penalty])
             t_merged.F = {**t_merged.F, **t.F} # also merge F
-
+            # must do: X, D2, T2
+            # should do: holes, holes_ref, term, color
+            
             t_merged.holes = t_merged.holes + t.holes
             t_merged.term = t.term
 
             # also merge looks
-            # add2Avg()
             new_features, new_features_i = add2AvgTr(t_merged, t)
             t_merged.visual_avg = new_features
             t_merged.visual_n = new_features_i
@@ -364,45 +397,60 @@ def mergeTrajectories2(tr_list:list[tuple[Trajectory, float, float]]) -> Traject
 
 # map: tr -> list[tuple]: possible next
 trToPossibleNext = {}
-def getPossibleNextWithMemo(tr: Trajectory, tr_list:list[Trajectory], time_window=20, type=1):
+def getPossibleNextWithMemo(tr: Trajectory, tr_list:list[Trajectory], time_window=20, type=1, also_overlapping=False):
     global trToPossibleNext
     # print(tr.id)
     if(tr in trToPossibleNext):
         print("is in memo, returning")
         return trToPossibleNext[tr]
     else:
+        # also check overlaping trajectories
         # print("is not in memo")
-        if(type == 1):
-            vrni = tr.getPossibleNext2(tr_list, time_window=time_window)
+        vrni = []
+        if(also_overlapping):
+            vrni = tr.getPossibleNextOverlap(tr_list, time_overlap=time_window)
+        if(type == 1): # bridge (linear extrapolation)
+            vrni = vrni + tr.getPossibleNext2(tr_list, time_window=time_window)
             trToPossibleNext[tr] = vrni
             # print(vrni)
             return vrni
+        # elif(type == 2): # bridge (flow)
         else:
             flows_path = COMPUTED_FLOW
             # return tr.getPossibleNext3(tr_list, flows_path, time_window=time_window)
         
-            vrni = tr.getPossibleNext3(tr_list, flows_path, time_window=time_window)
+            vrni = vrni + tr.getPossibleNext3(tr_list, flows_path, time_window=time_window)
             trToPossibleNext[tr] = vrni
             # print(vrni)
             return vrni
-    
+        # else: # overlap
+        #     vrni = tr.getPossibleNextOverlap(tr_list, time_overlap=time_window)
+        #     trToPossibleNext[tr] = vrni
+        #     # print(vrni)
+        #     return vrni
+
+# function generates all possible hypotheses from one specific hypothesis
+def getMergedHypothesis(tr:Trajectory, tr_list: list[Trajectory], time_window=20, type=1, also_overlapping=False, reset_memo=True):
+    # this is needed if used alone, when looping, this should be done outside of loop instead (if loop: reset_memo = False)
+    global MAX_N_TR_MERGE_ONCE
+    global T_INIT_S
+    if(reset_memo):
+        global trToPossibleNext
+        trToPossibleNext = {}
+        
+    tr_possible_next = getPossibleNextWithMemo(tr, tr_list, time_window=time_window,type=type, also_overlapping=also_overlapping)
+    # tr_possible_next = getPossibleNextWithMemo(tr1, tr_list, time_window=time_window, type=1, also_overlapping=True)
+    return extendAllPossibleNext(tr, [(tr,T_INIT_S,1.0,[])],tr_possible_next,tr_list, type=type, time_window=time_window, max_n=MAX_N_TR_MERGE_ONCE, also_overlapping=also_overlapping)
 
 # function generates and returns all possible connections with other trajectories (similar to extend, but it works with whole trajectories now)
-def getMergedHypotheses(tr_list: list[Trajectory], time_window=20, max_space_diff=100.0, type=1):
+# just a loop version of ^
+def getMergedHypotheses(tr_list: list[Trajectory], time_window=20, type=1, also_overlapping=False):
     # init memo:
     global trToPossibleNext
     trToPossibleNext = {}
-    # print("this is getMergedHypotheses: ")
     mtr_hypotheses = []
     for tr in tr_list:
-        # tr_possible_next = []
-        # if(type==1):
-        #     tr_possible_next = tr.getPossibleNext2(tr_list, time_window=time_window)
-        # if(type == 2):
-        #     flows_path = COMPUTED_FLOW
-        #     tr_possible_next = tr.getPossibleNext3(tr_list, flows_path, time_window=time_window)
-        tr_possible_next = getPossibleNextWithMemo(tr, tr_list, time_window, type)
-        all_possible_next = extendAllPossibleNext(tr, [(tr,T_INIT_S,1.0,[])],tr_possible_next,tr_list, type=type, max_n=MAX_N_TR_MERGE_ONCE)
+        all_possible_next = getMergedHypothesis(tr=tr, tr_list=tr_list, time_window=time_window, type=type, also_overlapping=also_overlapping, reset_memo=False)
         mtr_hypotheses = mtr_hypotheses + all_possible_next
     return mtr_hypotheses
 
@@ -411,12 +459,15 @@ def getMergedHypotheses(tr_list: list[Trajectory], time_window=20, max_space_dif
 # collected: to be merged
 # possible next: possible next trajectories that current can 'see'
 # all_trs: all trajectories (because we do not have it in dspace)
-def extendAllPossibleNext(t:Trajectory, collected:list[tuple[Trajectory, float]], possible_next: list[tuple[Trajectory, float]], all_trs: list[Trajectory], type=1, time_window=20, max_n=MAX_N_TR_MERGE_ONCE):
+CONTINUE_REC = True # for debugging purposes
+def extendAllPossibleNext(t:Trajectory, collected:list[tuple[Trajectory, float]], possible_next: list[tuple[Trajectory, float]], all_trs: list[Trajectory], type=1, time_window=20, max_n=MAX_N_TR_MERGE_ONCE, also_overlapping=False):
+    global CONTINUE_REC
     # 1. check if there are no more possible next (or maximum is reached)
     if(not possible_next or max_n == 0):
         # merge 'em
         # print(collected)
         t_merged = mergeTrajectories2(collected)
+        # print(collected[0])
         skipped_time = 0
         time_l = collected[0][0].X[0].t
         time_h = time_l
@@ -435,36 +486,34 @@ def extendAllPossibleNext(t:Trajectory, collected:list[tuple[Trajectory, float]]
         # print("-> <t%d, %6.2f>, total time: %d, time skipped: %d (%4.2f) " % (t_merged.id, t_merged.getScoreII(), total_time, skipped_time, (float(skipped_time) / (float(total_time)+0.0000001)) ))
         # return it
         return [t_merged]
-
-    mtr_hypotheses = []
-    # 2. possible_next_from_this = extendAllPossibleNext()
-    # print(possible_next)
-    for p in possible_next:
-        # tr_possible_next = tr.getPossibleNext(all_trs, max_space_diff=50)
-        tr = p[0]
-
-        # check if p is already contained in current path. If it is, continue (to avoid cycles)
-        already_in = False
-        for c in collected:
-            tr2 = c[0]
-            if(tr == tr2):
-                already_in = True
-                break
-        if(already_in): continue
-                
-        
-        # tr_possible_next = []
-        # if(type==1):
-        #     tr_possible_next = tr.getPossibleNext2(all_trs, time_window=time_window)
-        # if(type==2):
-        #     flows_path = COMPUTED_FLOW
-        #     tr_possible_next = tr.getPossibleNext3(all_trs, flows_path, time_window=time_window)
-        tr_possible_next = getPossibleNextWithMemo(tr, all_trs, time_window, type)
-        collected.append( p ) # add it
-        possible_next_trs = extendAllPossibleNext(tr, collected, tr_possible_next, all_trs, type=type, time_window=time_window, max_n=max_n-1)
-        collected.pop() # remove it
-        mtr_hypotheses = mtr_hypotheses + possible_next_trs
     
+    mtr_hypotheses = []
+    if(not CONTINUE_REC):
+        return mtr_hypotheses
+    try:
+        # 2. possible_next_from_this = extendAllPossibleNext()
+        # print(possible_next)
+        for p in possible_next:
+            # tr_possible_next = tr.getPossibleNext(all_trs, max_space_diff=50)
+            tr = p[0]
+
+            # check if p is already contained in current path. If it is, continue (to avoid cycles)
+            already_in = False
+            for c in collected:
+                tr2 = c[0]
+                if(tr == tr2):
+                    already_in = True
+                    break
+            if(already_in): continue
+
+            tr_possible_next = getPossibleNextWithMemo(tr, all_trs, time_window, type, also_overlapping=also_overlapping)
+            # print(len(tr_possible_next))
+            collected.append( p ) # add it
+            possible_next_trs = extendAllPossibleNext(tr, collected, tr_possible_next, all_trs, type=type, time_window=time_window, max_n=max_n-1, also_overlapping=also_overlapping)
+            collected.pop() # remove it
+            mtr_hypotheses = mtr_hypotheses + possible_next_trs
+    except KeyboardInterrupt:
+        CONTINUE_REC = False
     # 3. return all collected trajectories
     return mtr_hypotheses
 
@@ -519,6 +568,10 @@ def getConfigConsts(config_name, init_file: str = 'options.ini'):
     precomputed_feat = init_data.get(config_name, 'precomputed_feat')
     return int(t_offset), frames_path, dets_path, gt_path, precomputed_flow, precomputed_feat
 
+def read_tr_file(filename='trs.p'):
+    PATH_TO_DET_FILE = 'tracker/'+filename
+    return readTrajectoryFile(PATH_TO_DET_FILE)
+
 # main:
 def main():
     # optional
@@ -532,7 +585,7 @@ def main():
     global USE_PRECOMPUTED
     
     global SAVE_TRAJECTORIES
-    RUN_ALL = False
+    RUN_ALL = not False
 
     # some defaults:
     T_OFFSET = 1
@@ -641,7 +694,7 @@ def main():
         # INIT FEATURE EXTRACTOR
     featureExt = FeatureExtractor(model_size='base')
     # featureExt = FeatureExtractor(model_size='small')
-    featureExt.getFeatures(frame) # sets necessary offsets by computing first frame (could also do that differently)
+    frame_feat_padding: tuple[int, int, int, int] = getImagePadding(np.shape(frame)) # get feature image offsets
     frame_features = computeOrGetPCAFeaturesAtI(t_global, frame, featureExt, save_feat=True) # get features, init trs
         # END INIT FEATURES
 
@@ -667,7 +720,8 @@ def main():
         t = Trajectory(d,dspace,getTrColor())
         t.build2()
 
-        patches = getFeaturesFromFeatureMapAndPadding(d, feature_map_and_featExt=(frame_features, featureExt))
+        # patches = getFeaturesFromFeatureMapAndPadding(d, feature_map_and_featExt=(frame_features, featureExt))
+        patches = getFeaturesFromFeatureMapAndPadding3(d, feature_map_and_padding=(frame_features, frame_feat_padding))
         addToAvgTr(patches, t)
 
         tr.append(t)
@@ -702,6 +756,7 @@ def main():
 
     # EXTEND
     skip_n = 0
+    # skip_n = 27
     # skip_n = 40
     # skip_n = 75
     # skip_n = 80
@@ -726,7 +781,8 @@ def main():
         print("[EXTEND]")
         # main extend loop
         for i in range(n_res):
-            print("[@"+str(t_global)+"]")
+            # print("[@"+str(t_global)+"]")
+            print("[@ %d / %d (%d%%)]"%(t_global, n_all, int((float(t_global)/float(n_all))*100) ))
             
             # 1. init new frame (also compute flow, if needed, same for visual features):
             next_dets=D13[t_global]
@@ -736,6 +792,12 @@ def main():
 
             # get dino features for current frame
             frame_features = computeOrGetPCAFeaturesAtI(t_global, frame, featureExt, save_feat=True)
+
+            # add features to detections:
+            for d_i in next_dets:
+                # get patches: getPatchesInBB + roiPool (in helper func)
+                patches = getFeaturesFromFeatureMapAndPadding3(d_i, feature_map_and_padding=(frame_features, frame_feat_padding))
+                d_i.visual_feat = patches
             # ---
 
             # 2. extend trajectories
@@ -756,7 +818,7 @@ def main():
                     tr_next_from_same.append(t_prev)
 
                     # 2.3. extend current, also add forks, if they occur
-                    used_dets_current, forked_tr = t.extend4(feature_map_and_featExt=(frame_features, featureExt)) # need used dets to start new trajectories from unused ones
+                    used_dets_current, forked_tr = t.extend4(feature_map_and_padding=(frame_features, frame_feat_padding)) # need used dets to start new trajectories from unused ones
                     tr_next_from_same = tr_next_from_same + forked_tr
                     
                     # 2.4. update set of used dets (obtained from extend method)
@@ -803,7 +865,8 @@ def main():
                 t_new = Trajectory(d, dspace)
                 t_new.build2()
                 # also get features (roiPooled)
-                patches = getFeaturesFromFeatureMapAndPadding(d, feature_map_and_featExt=(frame_features, featureExt))
+                # patches = getFeaturesFromFeatureMapAndPadding(d, feature_map_and_featExt=(frame_features, featureExt))
+                patches = getFeaturesFromFeatureMapAndPadding3(d, feature_map_and_padding=(frame_features, frame_feat_padding))
                 addToAvgTr(patches, t_new)
                 new_tr.append(t_new)
             
@@ -915,7 +978,7 @@ def main():
                 for t in tr:
                     printTrWithStats(t, i_t=t_i)
                     # print("%3d. t%-5s (t%-5s) c=%-3d, len=%-4d, score=%9.4f %5d - %-5d, f:%s" % (t_i,t.not_so_much_unique_id,t.id, t.color[2], len(t.X), t.getScore2(), t.X[0].t, t.X[-1].t, t.term))
-                    t.drawToSpace()
+                    t.drawToSpace(at_t=t_global)
                     showing_next.add(t)
                     t_i = t_i+1
             # ---
@@ -948,7 +1011,7 @@ def main():
 
                 # 7.1. stage II (bridged) (is faster)
                 print("get merged 1:")
-                merged_trs1 = getMergedHypotheses(tr_all, type=order[0], time_window=stage_II_III_timew)
+                merged_trs1 = getMergedHypotheses(tr_all, type=order[0], time_window=stage_II_III_timew, also_overlapping=True)
                 print("done (1)")
                 
 
@@ -964,7 +1027,7 @@ def main():
 
                 # 7.3. stage III (flow) with unused trajectories (is slower)
                 print("get merged 2")
-                merged_trs2 = getMergedHypotheses(tr_left, type=order[1], time_window=stage_II_III_timew)
+                merged_trs2 = getMergedHypotheses(tr_left, type=order[1], time_window=stage_II_III_timew, also_overlapping=True)
                 print("done (2)")
 
                 # set all previous to fin, as they are replaced by new ones:
@@ -1172,7 +1235,7 @@ def main():
         
         # 7.1. stage II (bridged) (is faster)
         merge_fin = dropRedundant(merge_fin)
-        merged_trs1 = getMergedHypotheses(merge_fin, type=order[0], time_window=60) 
+        merged_trs1 = getMergedHypotheses(merge_fin, type=order[0], time_window=60, also_overlapping=True) 
         
         # 7.2. get unused trajectories
         tr_left = set(merge_fin)
@@ -1185,7 +1248,7 @@ def main():
         tr_left = list(tr_left)
 
         # 7.3. stage III (flow) with unused trajectories (is slower)
-        merged_trs2 = getMergedHypotheses(tr_left, type=order[1], time_window=60)
+        merged_trs2 = getMergedHypotheses(tr_left, type=order[1], time_window=60, also_overlapping=True)
         # [INFO] flow is no longer needed from here on, so delete possibly precomputed to save space
 
         merged_merged = merged_trs1+merged_trs2
@@ -1267,9 +1330,9 @@ def main():
         # write trajectory to file
         tr2File(selected_t, n_res, RESULT_PATH)
 
-    # 2. group them by hand:
+    # 2. group them 'by hand':
     if(path_creation_type == 2):
-        SAVE_PATH_TR = True
+        SAVE_PATH_TR = not True
         trajectories: list[Trajectory] = list(idTr_map.values())
         if(trajectories):
             t0 = selectBestTrAroundDetAtTime(trajectories, GT13[T_OFFSET][0].bb)
@@ -1298,557 +1361,994 @@ def main():
     
     # end main
 
-# debug main:
+# debug mains:
 def main_d1():
-    print("[INFO] This is main_d. To run main, set MAIN_DEB to False.")
-
-    FRAMES_PATH = "frames/LaSOT_bird-2/color/"
-    # DETS_FILE = "testing_data/LaSOT_bird-2_001.txt"
-    DETS_FILE = "../src/results.txt"
-    GT_PATH = "frames/LaSOT_bird-2/groundtruth.txt"
-    T_OFFSET = 1
-    n = 0
-
-    # ----------------------------------------------------------------------
-
-    D13 = [[]]+readDetFile2(DETS_FILE, T_OFFSET) # read detections from file
-    D14 = [[]]+readDetFile2(GT_PATH, T_OFFSET) # read ground truth
-    # print("track: ",D13[0:10])
-    # print("gt: ",D14[0:10])
-    t_global = T_OFFSET # current time (frame)
+    # optional
+    global PRECOMPUTED_FEAT_PATH
+    global PRECOMPUTED_FLOW_PATH
     
+    # set default to tracker ws (./tracker/...)
+    global COMPUTED_FLOW
+    global COMPUTED_FEAT
+    global RESULT_PATH
+    global USE_PRECOMPUTED
+    
+    global SAVE_TRAJECTORIES
+    RUN_ALL = False
+
+    # SEQUENCES:
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getConfigConsts('bird2') # lasot bird2
+    T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getConfigConsts('got10k14') # lasot bird2
+    if(USE_PRECOMPUTED):
+        COMPUTED_FLOW = PRECOMPUTED_FLOW_PATH
+        COMPUTED_FEAT = PRECOMPUTED_FEAT_PATH
+
+    # INIT
+    D13: list[list[Detection]] = readDetFile2(DETS_FILE) # read detections from file
+    D13 = [[]]+D13 # offset it (because time starts at 1, there is nothing on 0)
+    GT13: list[list[Detection]] = [[]]+readDetFile2(GT_PATH,T_OFFSET) # ground truth: for testing purposes only
+    t_global = T_OFFSET # current time (frame)
+    to_destroy_w = [] # windows to destroy
+    # print(t_global, D13[T_OFFSET: T_OFFSET+10])
+
     # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
-    n_res = len(D13) - n - T_OFFSET
+    n_res = len(D13) - T_OFFSET
+    n_all = n_res
     tr: list[Trajectory] = []
     tr_fin: list[Trajectory] = []
-    idTr_map: dict[int, Trajectory] = {} # id -> tr mapping: when merging, merged trajectory gets least id - this is used in the end (it contains all id-s that had been tracked)
-    n_stage_II_III = 120 # 5 # 20 # 'time window' - # of frames between trajectory selections
-    stage_II_III_timew = 20 # time window for merging of trajectories
-    # ------------------------------
+    
+    # INIT DSPACE
+    frame = getFrameAtI(t_global,FRAMES_PATH)
+    h,w,_ = np.shape(frame)
+    dspace = DetectionSpace(h,w, time_offset=T_OFFSET, show_flow=False, disable_vis=RUN_ALL) # also pass time offset for using correct indices | no visualization on run all
 
-    target_select = []
-    with open(GT_PATH) as fd:
-        first_l = fd.readline()
-        det = first_l[0:-1].split(",")
-        target_select = [float(i) for i in det]
-    print("selected det.:", target_select)
+    # set last frame
+    dspace.lastFrame = frame.copy()
+    dspace.map = frame
+
+    frame_features = computeOrGetPCAFeaturesAtI(t_global, frame, None, save_feat=False) # get features, init trs
+    frame_feat_padding: tuple[int, int, int, int] = getImagePadding(np.shape(frame))
+
+    # set flow map
+    # flow = getFlowAtI(t_global, FLOWS_PATH)
+    flow = computeOrGetFlowAtI(t_global, None)
+    flow_img = flow2img(flow)
+    dspace.flow_map = flow
+    dspace.last_flow_img = flow_img.copy()
+    dspace.flow_img = flow_img
+
+    print("init dspace: ")
+    D13_init = D13[t_global] # init with those from current time step
+    dspace.D.append(D13_init)
+    print(dspace.D)
+    t_global = t_global+1
+    n_res = n_res-1 # there is one frame less - [FIX]
+    # END INIT DSPACE
+
+
+    # INIT TRAJECTORIES
+    for d in D13_init:
+        t = Trajectory(d,dspace,getTrColor())
+        t.build2()
+
+        patches = getFeaturesFromFeatureMapAndPadding3(d, (frame_features, frame_feat_padding))
+        addToAvgTr(patches, t)
+        winname = "det_r%d"%(d.id)
+        showInNamed(winname, patches.astype(np.uint8))
+        to_destroy_w.append(winname)
+
+        showInNamed("%d"%(t.not_so_much_unique_id), t.visual_avg.astype(np.uint8))
+        
+
+        tr.append(t)
+        # idTr_map[t.not_so_much_unique_id] = t # add it to map
+    
+    print("init trs:")
+    print(tr)
+    # printTrListWithStatsOrdered(tr)
+    # END INIT TRAJECTORIES
+
+    
+
+    # quick visualization
+    if(not RUN_ALL):
+        for t in tr:
+            t.drawToSpace()
+        showInNamed("features", frame_features)
+        dspace.showSpace(draw_dets=DRAW_DETS)
+    
+
+    for i in range(n_res):
+        print("[@"+str(t_global)+"]")
+        
+        # 1. init new frame (also compute flow, if needed, same for visual features):
+        next_dets=D13[t_global]
+        print("this frame's dets:")
+        for di in next_dets:
+            print(di)
+        # print("next dets: ",next_dets)
+        dspace.D.append(next_dets)
+        frame = setFrameFlowAtI(dspace,t_global, None, frames_path=FRAMES_PATH)
+
+        # get dino features for current frame
+        frame_features = computeOrGetPCAFeaturesAtI(t_global, frame, None, save_feat=False)
+        # frame_feat_padding: tuple[int, int, int, int] = getImagePadding(np.shape(frame)) # not needed, suppose that frames are of same size throuought the sequence
+        
+        # compute (extract) visual features for every detection
+        
+        for d_i in next_dets:
+            # get patches: getPatchesInBB + roiPool (in helper func)
+            patches = getFeaturesFromFeatureMapAndPadding3(d_i, feature_map_and_padding=(frame_features, frame_feat_padding))
+            d_i.visual_feat = patches
+            
+            # patches = getFeaturesFromFeatureMapAndPadding3(d_i, feature_map_and_padding=(frame_features, frame_feat_padding), pooled=False)
+            # patches_rp = roiPool(patches, use_2d=False)
+            # patches2 = patches_rp.astype(np.float64)
+            # d_i.visual_feat = patches2
+            # winname = "det_r%d"%(d_i.id)
+            # showInNamed(winname, patches.astype(np.uint8))
+
+            # ip = ImagePadder(np.shape(patches)[0:2], patch_size=3)
+            # mat_p = ip.im_pad(patches,mode='edge')
+            # winname = "det_rp%d"%(d_i.id)
+            # showInNamed(winname, mat_p.astype(np.uint8))
+
+            # to_destroy_w.append(winname)
+        # ---
+
+        # 2. extend trajectories
+        # print("n_tr: ",len(tr))
+        used_dets: set[Detection] = set()
+        tr_next: list[Trajectory] = []
+        if(not RUN_ALL):
+            print("[EXTENDING TRAJECTORIES]")
+        for t in tr:
+            tr_next_from_same: list[Trajectory] = []
+            if((not t.term) and (not t.exited) and (t.holes_ref <= EXT_THR)): # extend only, if not terminated or exited
+                # print("current tr: t%d (t%d)"%(t.id, t.not_so_much_unique_id))
+                print("current tr: ", end="", flush=True)
+                printTrWithStats(t)
+                # 2.1. add current (note: this one gets extended)
+                tr_next_from_same.append(t)
+                
+                # 2.2. also include current trajectory (not extended), add it to hypothesis selection
+                t_prev = t.getCopy(deep=False)
+                t_prev.term = True # terminate it, so it does not extend
+                tr_next_from_same.append(t_prev)
+
+                # 2.3. extend current, also add forks, if they occur
+                used_dets_current, forked_tr = t.extend4(feature_map_and_padding=(frame_features, frame_feat_padding)) # need used dets to start new trajectories from unused ones
+                tr_next_from_same = tr_next_from_same + forked_tr
+                
+                # 2.4. update set of used dets (obtained from extend method)
+                used_dets.update(used_dets_current)
+            else:
+                # store terminated trajectories in separate list
+                t.term = True # terminate anyway, ...
+                tr_fin.append(t) # ... add to fin
+            
+            # 2.5. mark next from same (current + all forks) as exited, if enter exit zone
+            for tr_nxt in tr_next_from_same:
+                if(dspace.isInExitZone(tr_nxt.X[-1])):
+                    tr_nxt.exited = True
+                    tr_nxt.term = True
+
+            # 2.6. update next
+            tr_next = tr_next + tr_next_from_same
+
+            # if(not RUN_ALL):
+            #     # some debug prints
+            #     first = True
+            #     for tt in tr_next_from_same:
+            #         if(first):
+            #             first = False
+            #             # print(">>> t"+str(tt.id)+""+" - origin:",tt.origin,"score:",tt.getScore2(), "color:",tt.color, tt.X[-2:], "len:",len(tt.X))
+            #             # print(">>> t%d (%d) - origin:%s score:%6.2f color:%s len:%d"%(tt.id,tt.not_so_much_unique_id,str(tt.origin),tt.getScore2(), str(tt.color),str(tt.X[-2:]),len(tt.X)))
+            #             print(">>> t%d (%d) - origin:%s score:%6.2f color:%s %s len:%d"%(tt.id,tt.not_so_much_unique_id,str(tt.origin),tt.getScore2(), str(tt.color),str(tt.X[-2:]),len(tt.X)))
+            #         else:
+            #             print("|-> t%d (%d) - origin:%s score:%6.2f color:%s %s len:%d"%(tt.id,tt.not_so_much_unique_id,str(tt.origin),tt.getScore2(), str(tt.color),str(tt.X[-2:]),len(tt.X)))
+            # ---
+        if(not RUN_ALL):
+            print("[DONE EXTENDING]")
+        tr = tr_next
+
+        # hypothesis selection:
+        pure_trs, not_pure = analyzeTrsWithQ(tr) # analyze, drop out pure and copies of same (add pure, do qbp with all else)
+        
+        # 6.2 build Q with trs, that are not pure:
+        not_pure.sort(key=lambda x: x.getScore2(), reverse=True) # sort to minimize chance of getting stuck in some local minimum (there ARE issues with qbp-solver)
+        Q = buildQBPMatrixX(not_pure, type=1)
+
+        # print(Q)
+        # print("solving Q ...")
+        v = solveQBP2(Q)
+        print("done solving, v: ", end="")
+        print(v)
+
+        tr_next2: list[Trajectory] = []
+        for ii in range(len(v[0])):
+            tr_i = not_pure[ii]
+            if(v[0][ii] == 1):
+                # tr_i = tr[ii]
+                tr_next2.append(tr_i)
+                # print("t"+str(tr_i.id),end=" ", flush=True)
+            else:
+                tr_i.term = True # terminate ones that are not selected, because they will not make it in next iteration thus won't be updated
+        tr = tr_next2 + pure_trs
+
+
+        # to_destroy_w = []
+        if(not RUN_ALL):
+            for t in tr:
+                t.drawToSpace()
+                print("showing: t%d"%(t.not_so_much_unique_id))
+                showInNamed("%d"%(t.not_so_much_unique_id), t.visual_avg.astype(np.uint8))
+            showInNamed("features", frame_features.astype(np.uint8))
+
+            for d in next_dets:
+                winname = "det%d"%(d.id)
+                showInNamed(winname, d.visual_feat.astype(np.uint8))
+                to_destroy_w.append(winname)
+            
+
+            # draw gt bb, draw target bb:
+            if(GT13[t_global]):
+                drawBoundingBox(dspace.map, GT13[t_global][0].bb, [0,0,255])
+
+            dspace.showSpace(draw_dets=DRAW_DETS)
+            dspace.clearSpace()
+
+            for w in to_destroy_w:
+                cv.destroyWindow(w)
+            to_destroy_w = []
+        
+        
+        
+        t_global = t_global+1
+
+
+        # ---
+        # end main_d1
+
+def visualizeTrs():
+    global PRECOMPUTED_FEAT_PATH
+    global PRECOMPUTED_FLOW_PATH
+    
+    # set default to tracker ws (./tracker/...)
+    global COMPUTED_FLOW
+    global COMPUTED_FEAT
+    global RESULT_PATH
+    global USE_PRECOMPUTED
+    # SEQUENCES:
+    T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getConfigConsts('bird2') # lasot bird2
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getConfigConsts('got10k14') # lasot bird2
+    if(USE_PRECOMPUTED):
+        COMPUTED_FLOW = PRECOMPUTED_FLOW_PATH
+        COMPUTED_FEAT = PRECOMPUTED_FEAT_PATH
+
+    # INIT
+    D13: list[list[Detection]] = readDetFile2(DETS_FILE) # read detections from file
+    D13 = [[]]+D13 # offset it (because time starts at 1, there is nothing on 0)
+    GT13: list[list[Detection]] = [[]]+readDetFile2(GT_PATH,T_OFFSET) # ground truth: for testing purposes only
+    t_global = T_OFFSET # current time (frame)
+    to_destroy_w = [] # windows to destroy
+    # print(t_global, D13[T_OFFSET: T_OFFSET+10])
+
+    # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
+    n_res = len(D13) - T_OFFSET
+    n_all = n_res
     
     
     # INIT DSPACE
     frame = getFrameAtI(t_global,FRAMES_PATH)
     h,w,_ = np.shape(frame)
-    dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n), show_flow=False) # also pass time offset for using correct indices
-    
+    dspace = DetectionSpace(h,w, time_offset=T_OFFSET, show_flow=False, disable_vis=False) # also pass time offset for using correct indices | no visualization on run all
+
     # set last frame
     dspace.lastFrame = frame.copy()
     dspace.map = frame
 
-    # set D:
-    dspace.D.append(D14[t_global])
-
-    # init trajectories:
-    t_track = Trajectory(D14[t_global][0], dspace, [0,100,100])
-    t_gt = Trajectory(D14[t_global][0], dspace, [0,255,0])
+    print("init dspace: ")
+    D13_init = D13[t_global] # init with those from current time step
+    # dspace.D.append(D13_init)
+    dspace.D.append(D13[:])
     t_global = t_global+1
+    n_res = n_res-1 # there is one frame less - [FIX]
+    # END INIT DSPACE
 
-    # extend: just add from file:
-    for i in range(n_res):
-        # set new frame
-        frame = getFrameAtI(t_global,FRAMES_PATH)
-        dspace.lastFrame = frame.copy()
-        dspace.map = frame
-                
-        next_dets=D13[t_global] + D14[t_global]
-        print("next dets: ",next_dets)
-        dspace.D.append(next_dets)
+
+    # INIT TRAJECTORIES
+    trs: list[Trajectory]
+    off, n_all, trs = read_tr_file('trsa.p')
+    off, n_all, path = read_tr_file('trs.p')
+    print("path: ",path)
+
+    all_trs = trs.values()
+    for t in all_trs:
+        t.detectionSpace = dspace # so we can draw it in it (set valid pointer)
+    for t in path:
+        t.detectionSpace = dspace # so we can draw it in it (set valid pointer)
+    
+    # all_trs = dropRedundant(list(all_trs),red_level=2)
+    # print(all_trs)
+
+    t_global = T_OFFSET
+    t_global = 300
+    # t_global = 1200
+
+    while t_global <= n_all:
+        print("[@"+str(t_global)+"]")
         
-        next_det = D13[t_global][0]
-        next_gt = D14[t_global][0]
-            
-        t_track_tdet: TDet = TDet_from_Detection(next_det)
-        t_gt_tdet: TDet = TDet_from_Detection(next_gt)
-        t_track.X.append(t_track_tdet)
-        t_gt.X.append(t_gt_tdet)
-        t_track.drawToSpace()
-        t_gt.drawToSpace()
-        dspace.showSpace(draw_dets=DRAW_DETS)
+        # 1. init new frame (also compute flow, if needed, same for visual features):
+        next_dets=D13[t_global]
+        print("this frame's dets:")
+        # print("next dets: ",next_dets)
+        dspace.D.append(next_dets)
+        frame = setFrameFlowAtI(dspace,t_global, None, frames_path=FRAMES_PATH)
+
+        # for t in all_trs:
+        #     first_t = t.X[0].t
+        #     if(first_t <= t_global):
+        #         color = [150,150,150] # gray
+        #         if(t.X[-1].t >= t_global):
+        #             color = t.color
+        #             # if(t in path):
+        #             #     color = [0,0,255]
+        #             if((t_global-first_t) < len(t.X)):
+        #                 det = t.X[t_global - first_t]
+        #                 drawBoundingBox(dspace.map, bbResize(det.bb, 1), t.color)
+        #                 drawX(dspace.map, det.x)
+        #             else:
+        #                 print("[WARN] t_global is %d, %s"%(t_global, str(t.X[-5:])))
+        #         t.drawToSpace(color)
+        for t in path:
+            first_t = t.X[0].t
+            if(first_t <= t_global):
+                color = [150,150,255] # gray
+                if(t.X[-1].t >= t_global):
+                    color = [0,0,255]
+                    # if(t in path):
+                    #     color = [0,0,255]
+                    if((t_global-first_t) < len(t.X)):
+                        det = t.X[t_global - first_t]
+                        drawBoundingBox(dspace.map, bbResize(det.bb, 3),color)
+                        drawX(dspace.map, det.x)
+                    else:
+                        print("[WARN] t_global is %d, %s"%(t_global, str(t.X[-5:])))
+                t.drawToSpace(color)
+        # draw gt:
+        gtdet = GT13[t_global]
+        # print(gtdet)
+        if(gtdet):
+            drawBoundingBox(dspace.map, bbResize(gtdet[0].bb,-1), [0,0,255])
+        dspace.showSpace(draw_dets=False, draw_last_dets_bb=True)
         dspace.clearSpace()
 
-        t_global = t_global+1
-
-
-# quick debug main:
-def main_d2():
-    print("[INFO] This is main_qd. To run main, set MAIN_DEB to False. To run main_deb, set MAIN_QD to False.")
-    global COMPUTED_FLOW
-    global COMPUTED_FEAT
-
-    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('coin18') # coin18 sequence
-    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('bird2') # bird2 sequence
-    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('got10k14') # bird2 sequence
-    T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('chameleon20') # chameleon20 sequence
-    t_global = T_OFFSET
-    # init dspace
-    
-    # get frame:
-    frame0 = getFrameAtI(t_global,FRAMES_PATH)
-    # print(frame0)
-    h, w, _ = np.shape(frame0)
-    dspace = DetectionSpace(h,w,time_offset=T_OFFSET, show_flow=False, disable_vis=False)
-    dspace.map = frame0
-    dspace.lastFrame = frame0.copy()
-    D13 = [[]]+readDetFile2(DETS_FILE, T_OFFSET)
-    GT13: list[list[Detection]] = [[]]+readDetFile2(GT_PATH,T_OFFSET)
-    n = len(D13)-1 # all frames
-    print(n)
-    dspace.D = D13[t_global:]
-    # dspace.showSpace()
-    # end init dspace
-
-    # init feature extractor
-    # featureExt = FeatureExtractor(model_size='base')
-    # featureExt.getFeatures(frame0) # sets necessary offsets by computing features for first frame
-    # end init feature ext
-
-    # get trajectories:
-    # T_OFFSET, t_global, tr_all = read_tr_file('trsdeb2.p')
-    # file = read_tr_file('results_seq/coin18/trs.p')
-    file = read_tr_file('trs.p')
-    T_OFFSET, idTr_map = file
-    # print(file)
-    # idTr_map = list(idTr_map.values())
-    # idTr_map = idTr_map
-    idTr_map = list(idTr_map.values())
-
-    print("tr all:")
-    
-    # printTrListWithStatsOrdered(idTr_map.values())
-    printTrListWithStatsOrdered(idTr_map)
-
-    # show trajectories in current time (and image features) ---
-    # print i-th tr
-    # trajectories = merged_merged
-    # trajectories: list[Trajectory] = list(idTr_map.values())
-    trajectories: list[Trajectory] = list(idTr_map)
-    t0 = selectBestTrAroundDetAtTime(trajectories, GT13[T_OFFSET][0].bb)
-    # t0 = selectBestTrAroundDetAtTime2(trajectories, GT13[0:15])
-    path = [t0]+connectTrs(t0, trajectories)
-    
-    # path = idTr_map
-    
-    path_trs = []
-    for tr in path:
-        tr.color = [0,0,255]
-        path_trs.append(tr)
-    # path2File(path, n, RESULT_PATH+'2')
-    # trajectories = trajectories + path
-    t_global = 1
-    # t_global = 530
-    # t_global = 800
-    # t_global = 805
-    # t_global = 3690
-    for t in trajectories:
-        t.detectionSpace = dspace
-    # trajectories = path_trs
-
-    SAVE_FEAT = not True
-    SHOW_IMG = True
-    while t_global <= n:
-        print("-> ",t_global) # print time
-        frame = getFrameAtI(t_global, FRAMES_PATH)
-        dspace.map = frame
-        dspace.lastFrame = frame.copy()
-
-        # patches:
-        # pca_feat = computeOrGetPCAFeaturesAtI(t_global, frame, featureExt, save_feat=SAVE_FEAT)
-        # pad_l, pad_u = featureExt.last_padder.pad_l, featureExt.last_padder.pad_u # used to align bb properly
-        # if(SHOW_IMG):
-        #     showInNamed("image - features", pca_feat)
-
-        # get all trajectories, that live in this time instant:
-        # trajectories_that_live_at_this_time = []
-        print("trajectories at this time: ")
-        for tr in trajectories:
-            # printTrWithStats(tr)
-            # if(tr.X[0].t <= t_global and t_global <= tr.X[-1].t):
-            if(tr.X[0].t <= t_global and t_global <= tr.X[0].t + len(tr.X)-1):
-                # trajectories_that_live_at_this_time.append(tr)
-                # current tdet:
-                t = t_global-tr.X[0].t # offset time
-                tr_det_t:TDet = tr.X[t]
-                printTrWithStats(tr)
-                t_off = t_global - tr.origin.t
-                print(tr.X[t_off:t_off+10])
-                
-                # get features:
-                # patches = patchesInBB(pca_feat, tr_det_t.bb, xy_off=[pad_l, pad_u])
-                # patches_rp = roiPool(patches, use_2d=False)
-                
-                # draw things
-                if(SHOW_IMG):
-                    tr.drawToSpace() # draw traj
-                    drawBoundingBox(dspace.map, tr_det_t.bb, tr.color) # draw bb
-                    drawX(dspace.map, tr_det_t.x)
-                    # showInNamed("%d"%(tr.not_so_much_unique_id), patches_rp) # draw features
-
-        # draw gt:
-        if(SHOW_IMG):
-            if(GT13[t_global]):
-                drawBoundingBox(dspace.map, GT13[t_global][0].bb, [0,50,205])
-            dspace.showSpace(draw_dets=False, draw_last_dets_bb=True, at_time=t_global, bb_color=[0,255,200])
-            dspace.clearSpace()
-        t_global = t_global +1
-    # ---------------------------------
-
-
-def main_d25():
-    print("[INFO] This is main_d25. To run main, set MAIN_DEB to False. To run main_deb, set MAIN_QD to False.")
-    T_OFFSET = 1
-    D13 = [[]]+readDetFile2("testd.txt", T_OFFSET)
-    n = len(D13)-1 # all frames
-    # n = 1650 # all frames
-    # print(D13)
-    
-    def make_tr_from_dets(detl:list[int]):
-        first = True
-        tr = None
-        for d in detl:
-            det = D13[d][0]
-            if(first):
-                tr = Trajectory(det, None)
-                tr.build2()
-                first = False
-            else:
-                tdet = TDet_from_Detection(det)
-                tr.X.append(tdet)
-        return tr
-    
-    t0 = make_tr_from_dets([3,3,3,3])
-    t1 = make_tr_from_dets([3,3,4,5,6,6,6,6])
-    
-    # tr1 = []
-    tr1 = [t0]
-    # tr1 = [t0,t1]
-    # print(path2list(tr1, n, T_OFFSET))
-    path2File2(tr1, n, RESULT_PATH+"3")
-    
-    
-    # _,trs_path = read_tr_file("trsp.p")
-    # print(trs_path)
-    # # path_list = path2list(trs_path, n, T_OFFSET)
-    # path2File2(trs_path, n, RESULT_PATH+"3")
 
 
 
-def main_d3():
-    print("[INFO] This is main_qd. To run main, set MAIN_DEB to False. To run main_deb, set MAIN_QD to False.")
-    T_OFFSET = 1
+        t_global = t_global + 1
 
-    t_global = T_OFFSET
-    # init dspace
-    
-    # get frame:
-    frame0 = np.zeros((100,100,3)).astype(np.uint8)
-    # print(frame0)
-    h, w, _ = np.shape(frame0)
-    dspace = DetectionSpace(h,w,time_offset=T_OFFSET, show_flow=False, disable_vis=False)
-    dspace.map = frame0
-    dspace.lastFrame = frame0.copy()
-    
-    # synthetic detections, trajectories:
 
-    dets: list[Detection] = []
-    tdets: list[TDet] = []
-    trs: list[Trajectory] = []
+
+    # printTrListWithStatsOrdered(trs.values())
+    # merged = getMergedHypotheses(trs.values(), time_window=100)
+    # printTrListWithStatsOrdered(merged)
+    # simple, all_else = analyzeTrsWithQ(merged)
+    # print("simple:")
+    # printTrListWithStatsOrdered(simple)
+    # print("not simple:")
+    # printTrListWithStatsOrdered(all_else)
+
+    # Q = buildQBPMatrixX(all_else, 2)
+    # v = solveQBP2(Q)
+    # print(v)
+
+    # selected_trs = getSelected(v[0], all_else)
+    # printTrListWithStatsOrdered(selected_trs)
+
+def getAtIndices(tr_list: list[Trajectory], indices:list[int]):
+    vrni =[]
+    for i in range(len(tr_list)):
+        if(i in indices):
+            vrni.append(tr_list[i])
+    return vrni
+
+def extendToEnd(tr_: Trajectory, tr_list: list[Trajectory], time_window=100):
+    print("this is extendToEnd")
+    # 1. extend given tr as much as possible
+    all_possible_next:list[Trajectory] = getMergedHypothesis(tr_,tr_list=tr_list, time_window=time_window, type=1, also_overlapping=True, reset_memo=True) # 2. extend all possible from this one
+
+    # remove redundant:
+    next_wo_redundant:list[Trajectory] = dropRedundant(all_possible_next, red_level=2)
+    print("all possible next of t%d"%tr_.not_so_much_unique_id)
+    printTrListWithStatsOrdered(next_wo_redundant)
+
+    # 3. if it is not at the end already, then find visually best matches to continue:
+    next_n_trs = 30
+    n_steps = 5 # maximum number of restarts
+    next_trs:list[Trajectory] = []
+    for tr in next_wo_redundant:
+        # 1.1 ending time (search only among those that are from then on)
+        print("continuing trajectory:")
+        printTrWithStats(tr)
+        tr_end_time = tr.X[-1].t
+        print("possible next based on time:")
+        possible_next = []
+        i = 0
+        max_next_visual_score = 0
+        next_tr_with_max_score = None
+        for a in tr_list:
+            if a.X[0].t > tr_end_time:
+                possible_next.append(a)
+                # find visual similarity:
+                score = getProbIVBF([0,0,0,0],tr.visual_avg, [0,0,0,0], a.visual_avg, a=0) # consider only visual score (a=0)
+                if(max_next_visual_score < score):
+                    max_next_visual_score = score
+                    next_tr_with_max_score = a
+                printTrWithStats(a, i_t=i, add_to_end="%.2f"%score)
+                i = i+1
+            if(i > next_n_trs):
+                break
+        print("next tr with max score:")
+        if(next_tr_with_max_score is not None):
+            printTrWithStats(next_tr_with_max_score)
+            # merge it
+            time_diff = next_tr_with_max_score.X[0].t - tr.X[-1].t
+            ext_tdet = tr.lastNtimesCopy(time_diff-1)
+            next_trs.append(mergeTrajectories2([(tr, 0.5,1,[]),(next_tr_with_max_score, max_next_visual_score,1,ext_tdet)]))
+        else:
+            print("there is no best next")
+
+        # printTrListWithStatsOrdered(possible_next)
+        print()
+    # 4. drop redundant again
+    next_trs = dropRedundant(next_trs)
+    # 5. set new target, repeat extend
+    printTrListWithStatsOrdered(next_trs)
+    # solveqbp
+    Q=buildQBPMatrixX(next_trs, type=2)
+    print(Q)
+    v = solveQBP2(Q)
+    next_trs = getSelected(v[0], next_trs)
+    print("next trs after qbp")
+    printTrListWithStatsOrdered(next_trs)
+
+
+    next_trs2: list[Trajectory] = []
+    for tr in next_trs:
+        next_merged = getMergedHypothesis(tr,tr_list=tr_list, time_window=time_window, type=1, also_overlapping=True, reset_memo=False) # 2. extend all possible from this one
+        next_trs2 = next_trs2 + next_merged
+    next_trs2 = dropRedundant(next_trs2)
+    print("next round:")
+    printTrListWithStatsOrdered(next_trs2)
+
+    Q=buildQBPMatrixX(next_trs2, type=2)
+    print(Q)
+    v = solveQBP2(Q)
+    next_trs2 = getSelected(v[0], next_trs2)
+    print("next trs after qbp")
+    printTrListWithStatsOrdered(next_trs2)
+
+
+    # return next_trs2
+
+def extendToEnd2(tr_: Trajectory, tr_list: list[Trajectory], time_window=100):
+    print("this is extendToEnd2")
+    # 0. INIT LIST
+    all_trs: list[Trajectory] = [tr_]
+    other_trs: list[Trajectory] = []
+    continue_flag = True
+    n_steps = 5 # maximum number of restarts
+
     ii = 0
-    for i in range(0,90,3):
-        det = bbDet2Det( [i,i,31,31], ii+T_OFFSET)
-        dets.append(det)
-        tdets.append(TDet_from_Detection(det))
-        ii = ii+1
-    print(dets)
-    trs.append(Trajectory(dets[0], dspace, [0,0,255]))
-    trs.append(Trajectory(dets[18], dspace, [255,0,0]))
-    trs.append(Trajectory(dets[19], dspace, [0,255,0]))
-    trs.append(Trajectory(dets[20], dspace, [0,255,255]))
-    trs.append(Trajectory(dets[21], dspace, [255,255,0]))
-    trs.append(Trajectory(dets[22], dspace, [255,0,255]))
-    # trs.append(Trajectory(dets[23], dspace, [0,255,100]))
+    while (ii < n_steps and continue_flag):
+        # 2. extend all from list
+        all_possible_next:list[Trajectory] = []
+        for tr in all_trs:
+            all_possible_next = all_possible_next + getMergedHypothesis(tr,tr_list=tr_list, time_window=time_window, type=1, also_overlapping=True, reset_memo=True) # 2. extend all possible from this one
+        
+        # 1st solve qbp to remove unnecessary ones
+        Q = buildQBPMatrixX(all_possible_next, type=2)
+        v = solveQBP2(Q)
+        all_possible_next = getSelected(v[0], all_possible_next)
+        all_trs = all_possible_next
 
-    # extend it: getPossibleNext
-
-    trs[3].origin.t=trs[2].origin.t # tole naredi loop!
-    trs[4].origin.t=trs[2].origin.t # tole naredi loop!
-    
-    t_i = 0
-    for t in trs:
-        t.build2()
-        if(t_i == 0):
-            t.X = tdets[0:17]
-            t_i=1
-        t.drawToSpace()
-        drawBoundingBox(dspace.map, t.X[-1].bb)
-    dspace.showSpace()
-    dspace.clearSpace()
-
-    print("merging trajectories:")
-    merged: list[Trajectory] = getMergedHypotheses(trs)
-    printTrListWithStatsOrdered(merged)
-
-    for t in merged:
-        t.drawToSpace()
-        for tm in t.T2.keys():
-            drawO(dspace.map,tm.origin.x)
-        print("showing: ")
-        printTrWithStats(t)
-        print(t.X)
-        showInNamed("merged", dspace.map)
-        cv.waitKey(0)
-        dspace.clearSpace()
-
-
-# quick debug main:
-def main_d4():
-    print("[INFO] This is main_qd. To run main, set MAIN_DEB to False. To run main_deb, set MAIN_QD to False.")
-    global COMPUTED_FLOW
-    global COMPUTED_FEAT
-
-    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('coin18') # coin18 sequence
-    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('bird2') # bird2 sequence
-    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('got10k14') # bird2 sequence
-    T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('chameleon20') # chameleon20 sequence
-    t_global = T_OFFSET
-    # init dspace
-    
-    # get frame:
-    frame0 = getFrameAtI(t_global,FRAMES_PATH)
-    # print(frame0)
-    h, w, _ = np.shape(frame0)
-    dspace = DetectionSpace(h,w,time_offset=T_OFFSET, show_flow=False, disable_vis=False)
-    dspace.map = frame0
-    dspace.lastFrame = frame0.copy()
-    D13 = [[]]+readDetFile2(DETS_FILE, T_OFFSET)
-    GT13: list[list[Detection]] = [[]]+readDetFile2(GT_PATH,T_OFFSET)
-    n = len(D13)-1 # all frames
-    print(n)
-    dspace.D = D13[t_global:]
-    # end init dspace
-
-    # get trajectories:
-    # T_OFFSET, t_global, tr_all = read_tr_file('trsdeb2.p')
-    # file = read_tr_file('results_seq/coin18/trs.p')
-    file = read_tr_file('trs.p')
-    T_OFFSET, idTr_map = file
-    # print(file)
-    # idTr_map = list(idTr_map.values())
-    # idTr_map = idTr_map
-
-    # read detections from results file:
-    R13: list[list[Detection]] = [[]]+readDetFile2(RESULT_PATH+"result.txt")
-    # print(R13)
-    print("tr all:")
-    
-    # printTrListWithStatsOrdered(idTr_map.values())
-    printTrListWithStatsOrdered(idTr_map)
-
-    # show trajectories in current time (and image features) ---
-    # print i-th tr
-    # trajectories = merged_merged
-    # trajectories: list[Trajectory] = list(idTr_map.values())
-    trajectories: list[Trajectory] = list(idTr_map)
-    # t0 = selectBestTrAroundDetAtTime(trajectories, GT13[T_OFFSET][0].bb)
-    t0 = selectBestTrAroundDetAtTime2(trajectories, GT13[0:10])
-    path = [t0]+connectTrs(t0, trajectories)
-    # path = idTr_map
-    
-    path_trs = []
-    for tr in path:
-        tr.color = [0,0,255]
-        path_trs.append(tr)
-    # path2File(path, n, RESULT_PATH+'2')
-    # trajectories = trajectories + path
-    t_global = 1
-    # t_global = 530
-    # t_global = 800
-    # t_global = 805
-    # t_global = 3690
-    for t in trajectories:
-        t.detectionSpace = dspace
-    trajectories = path_trs
-
-    SAVE_FEAT = not True
-    SHOW_IMG = True
-    while t_global <= n:
-        print("-> ",t_global) # print time
-        frame = getFrameAtI(t_global, FRAMES_PATH)
-        dspace.map = frame
-        dspace.lastFrame = frame.copy()
-
-        # patches:
-        # pca_feat = computeOrGetPCAFeaturesAtI(t_global, frame, featureExt, save_feat=SAVE_FEAT)
-        # pad_l, pad_u = featureExt.last_padder.pad_l, featureExt.last_padder.pad_u # used to align bb properly
-        # if(SHOW_IMG):
-        #     showInNamed("image - features", pca_feat)
-
-        # get all trajectories, that live in this time instant:
-        # trajectories_that_live_at_this_time = []
-        print("trajectories at this time: ")
-        for tr in trajectories:
+        # 3. if it is not at the end already, then find visually best matches to continue:
+        next_n_trs = 30
+        next_trs:list[Trajectory] = []
+        can_any_continue = False # flag to indicate whether trajectories can continue or not (based on time; if no new trajectory could be added, this stays false and extend does not need to continue)
+        for tr in all_trs:
+            # 1.1 ending time (search only among those that are from then on)
+            # print("continuing trajectory:")
             # printTrWithStats(tr)
-            # if(tr.X[0].t <= t_global and t_global <= tr.X[-1].t):
-            if(tr.X[0].t <= t_global and t_global <= tr.X[0].t + len(tr.X)-1):
-                # trajectories_that_live_at_this_time.append(tr)
-                # current tdet:
-                t = t_global-tr.X[0].t # offset time
-                tr_det_t:TDet = tr.X[t]
-                printTrWithStats(tr)
-                t_off = t_global - tr.origin.t
-                print(tr.X[t_off:t_off+10])
-                
-                # get features:
-                # patches = patchesInBB(pca_feat, tr_det_t.bb, xy_off=[pad_l, pad_u])
-                # patches_rp = roiPool(patches, use_2d=False)
-                
-                # draw things
-                if(SHOW_IMG):
-                    bb = bbResize(tr_det_t.bb, 1)
-                    tr.drawToSpace() # draw traj
-                    drawBoundingBox(dspace.map, bb, tr.color) # draw bb
-                    drawX(dspace.map, tr_det_t.x)
-                    # showInNamed("%d"%(tr.not_so_much_unique_id), patches_rp) # draw features
+            tr_end_time = tr.X[-1].t
+            # print("possible next based on time:")
+            possible_next = []
+            i = 0
+            max_next_visual_score = 0
+            next_tr_with_max_score = None
+            for a in tr_list:
+                if a.X[0].t > tr_end_time:
+                    possible_next.append(a)
+                    # find visual similarity:
+                    score = getProbIVBF([0,0,0,0],tr.visual_avg, [0,0,0,0], a.visual_avg, a=0) # consider only visual score (a=0)
+                    if(max_next_visual_score < score):
+                        max_next_visual_score = score
+                        next_tr_with_max_score = a
+                    # printTrWithStats(a, i_t=i, add_to_end="%.2f"%score)
+                    can_any_continue = True
+                    i = i+1
+                if(i > next_n_trs):
+                    break
+            print("next tr with max score:")
+            if(next_tr_with_max_score is not None):
+                printTrWithStats(next_tr_with_max_score)
+                # merge it
+                time_diff = next_tr_with_max_score.X[0].t - tr.X[-1].t
+                ext_tdet = tr.lastNtimesCopy(time_diff-1)
+                next_trs.append(mergeTrajectories2([(tr, 0.5,1,[]),(next_tr_with_max_score, max_next_visual_score,1,ext_tdet)]))
+            else:
+                print("there is no best next")
 
-        # draw gt:
-        if(SHOW_IMG):
+            # printTrListWithStatsOrdered(possible_next)
+            print()
+        if(can_any_continue):
+            all_trs = next_trs
 
-            if(GT13[t_global]): # draw gt
-                det = GT13[t_global][0]
-                bb = bbResize(det.bb, 3)
-                drawBoundingBox(dspace.map, bb, [0,50,205])
-            if(R13[t_global]): # draw result file det
-                det = R13[t_global][0]
-                bb = bbResize(det.bb, 2)
-                drawBoundingBox(dspace.map, bb, [100,50,205])
-            dspace.showSpace(draw_dets=False, draw_last_dets_bb=True, at_time=t_global, bb_color=[0,255,200])
-            dspace.clearSpace()
-        t_global = t_global +1
-    # ---------------------------------
+        # 2nd qbp
+        Q=buildQBPMatrixX(all_trs, type=2)
+        v = solveQBP2(Q)
+        all_trs = getSelected(v[0], all_trs)
+        ii = ii+1
+        continue_flag = can_any_continue # if there are hypotheses, that can be extended, then continue, otherwise do not
+    return all_trs
 
-def main_d5():
-    print("[INFO] This is main_d5. To run main, set MAIN_N to 0.")
+# function gets best trajectory based on score (higher is better) and number of merged (lower is better)
+def getBestFromList(tr_list: list[Trajectory]):
+    def scoreNmergedComparator(tr1: Trajectory, tr2: Trajectory):
+        s1 = tr1.getScore2()
+        s2 = tr2.getScore2()
+        if(math.isclose(s1,s2)):
+            nMerged1 = len(tr1.T2.keys())
+            nMerged2 = len(tr2.T2.keys())
+            if(nMerged1 == nMerged2): return 0
+            elif(nMerged1 < nMerged2): return 1
+            else: return -1
+        elif(s1 > s2): return 1
+        else: return -1
+    
+    bestTr: Trajectory = tr_list[0]
+    for t in tr_list:
+        if(t == bestTr): continue # get past first one
+        if(scoreNmergedComparator(t, bestTr) == 1):
+            bestTr = t
+    return bestTr
+
+
+def visualizeTrs2():
+    global PRECOMPUTED_FEAT_PATH
+    global PRECOMPUTED_FLOW_PATH
+    
+    # set default to tracker ws (./tracker/...)
     global COMPUTED_FLOW
     global COMPUTED_FEAT
+    global RESULT_PATH
+    global USE_PRECOMPUTED
+    # SEQUENCES:
+    T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getConfigConsts('bird2') # lasot bird2
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getConfigConsts('got10k14') # lasot bird2
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getConfigConsts('coin18') # lasot bird2
+    if(USE_PRECOMPUTED):
+        COMPUTED_FLOW = PRECOMPUTED_FLOW_PATH
+        COMPUTED_FEAT = PRECOMPUTED_FEAT_PATH
 
-    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('coin18') # coin18 sequence
-    T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('bird2') # bird2 sequence
-    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('got10k14') # bird2 sequence
-    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, COMPUTED_FLOW, COMPUTED_FEAT = getConfigConsts('chameleon20') # chameleon20 sequence
+    # INIT
+    D13: list[list[Detection]] = readDetFile2(DETS_FILE) # read detections from file
+    D13 = [[]]+D13 # offset it (because time starts at 1, there is nothing on 0)
+    GT13: list[list[Detection]] = [[]]+readDetFile2(GT_PATH,T_OFFSET) # ground truth: for testing purposes only
+    t_global = T_OFFSET # current time (frame)
+    to_destroy_w = [] # windows to destroy
+    # print(t_global, D13[T_OFFSET: T_OFFSET+10])
+
+    # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
+    n_res = len(D13) - T_OFFSET
+    n_all = n_res
+    
+    
+    # INIT DSPACE
+    frame = getFrameAtI(t_global,FRAMES_PATH)
+    h,w,_ = np.shape(frame)
+    dspace = DetectionSpace(h,w, time_offset=T_OFFSET, show_flow=False, disable_vis=False) # also pass time offset for using correct indices | no visualization on run all
+
+    # set last frame
+    dspace.lastFrame = frame.copy()
+    dspace.map = frame
+
+    # return
+    print("init dspace: ")
+    D13_init = D13[t_global] # init with those from current time step
+    # dspace.D.append(D13_init)
+    dspace.D.append(D13[:])
+    t_global = t_global+1
+    n_res = n_res-1 # there is one frame less - [FIX]
+    # END INIT DSPACE
+
+
+    # INIT TRAJECTORIES
+    trs: list[Trajectory]
+    off, n_all, trs = read_tr_file('trsa.p')
+    # off, n_all, path = read_tr_file('trs.p')
+    # print("path: ",path)
+
+    all_trs:list[Trajectory] = list(trs.values())
+    for t in all_trs:
+        t.detectionSpace = dspace # so we can draw it in it (set valid pointer)
+    
+    # all trs:
+    print("all trs:")
+    printTrListWithStatsOrdered(all_trs)
+    tr1:Trajectory = all_trs[2] # 1. choose one closest to gt in first frame (to start)
+    # tr1:Trajectory = all_trs[0] # 1. choose one closest to gt in first frame (to start)
+    # tr2:Trajectory = all_trs[17]
+
+    # print("tr1:")
+    # printTrWithStats(tr1)
+    # print(tr1.X[-5:])
+    
+    # t_dif = tr2.X[0].t - tr1.X[-1].t
+    # print(t_dif)
+    # print(tr1.lastNtimesCopy(t_dif-1))
+
+
+    # print("tr2:")
+    # printTrWithStats(tr1)
+    # print(tr2.X[0:5])
+    
+    # tr4:Trajectory = all_trs[66]
+    # tr3:Trajectory = all_trs[62]
+    # merged = getMergedHypothesis(tr3,all_trs,time_window=100,type=1, also_overlapping=True)
+    # printTrListWithStatsOrdered(merged)
+
+
+    # return
+    # merge it
+    next_trs = extendToEnd2(tr1, all_trs)
+    print(next_trs)
+    printTrListWithStatsOrdered(next_trs)
+    print()
+    # all_trs = [next_trs[1]]
+    # all_trs = [tr1]
+    next_tr = getBestFromList(next_trs)
+    printTrWithStats(next_tr)
+    all_trs = [next_tr]
+    
+
     t_global = T_OFFSET
+    # t_global = 700
+    # t_global = 300
+    # t_global = 1200
+    # all_trs = refined
+    # all_trs = tr_list
+    # all_trs = merged_selected
+    # all_trs = refined
+    while t_global <= n_all:
+        print("[@ %d / %d (%d%%)]"%(t_global, n_all, int((float(t_global)/float(n_all))*100) ))
+        
+        # 1. init new frame (also compute flow, if needed, same for visual features):
+        next_dets=D13[t_global]
+        # print("this frame's dets:")
+        # print("next dets: ",next_dets)
+        dspace.D.append(next_dets)
+        frame = setFrameFlowAtI(dspace,t_global, None, frames_path=FRAMES_PATH)
+        # print("current trs:")
+        for t in all_trs:
+            first_t = t.X[0].t
+            if(first_t <= t_global):
+                color = [150,150,150] # gray
+                if(t.X[-1].t >= t_global):
+                    # printTrWithStats(t)
+                    color = t.color
+                    # if(t in path):
+                    #     color = [0,0,255]
+                    t.drawToSpace(color, at_t=t_global, max_len=20)
+                    if((t_global-first_t) < len(t.X)):
+                        det = t.X[t_global - first_t]
+                        drawBoundingBox(dspace.map, bbResize(det.bb, 1), t.color)
+                        drawX(dspace.map, det.x)
+                    else:
+                        print("[WARN] t_global is %d, %s"%(t_global, str(t.X[-5:])))
+                else:
+                    t.drawToSpace(color, at_t=t_global, max_len=20)
+        
+        # draw gt:
+        gtdet = GT13[t_global]
+        # print(gtdet)
+        if(gtdet):
+            drawBoundingBox(dspace.map, bbResize(gtdet[0].bb,-1), [0,0,255])
+        dspace.showSpace(draw_dets=False, draw_last_dets_bb=False)
+        dspace.clearSpace()
+        t_global = t_global + 1
+
+
+
+
+# merge overlaping
+def mergeOverlaping(tr1: Trajectory, tr2: Trajectory):
+    overlap = tr1.X[-1].t - tr2.X[0].t
+    vrni = []
+    if(overlap > 0):
+        print("we have overlap")
+        a1, b1 = tr1.X[0].t, tr1.X[-1].t
+        a2, b2 = tr2.X[0].t, tr2.X[-1].t
+        if(a2 > a1 and a2 < b1 and b2 > b1):
+            print("merging the 'long' way")
+            print("overlap: %d"%(overlap))
+
+            # fix x:
+            print(tr1.X)
+            print(tr2.X)
+
+            # 1. find first that overlaps
+            i = len(tr1.X)-1
+            times_of_overlap = set()
+            while(tr1.X[i].t >= tr2.X[0].t):
+                times_of_overlap.add(tr1.X[i].t)
+                i = i-1
+            new_x = tr1.X[0:i+1] + tr2.X
+            new_x[i+1].color = [10,10,150]
+
+            # 2. get dets from D2 that have that time
+            dets_overlap = set()
+            for d in tr1.D2.keys():
+                if(d.t in times_of_overlap):
+                    dets_overlap.add(d)
+            
+            # 3. new D2:
+            new_d2 = {**tr1.D2, **tr2.D2}
+            for d in dets_overlap:
+                new_d2[d] = 0.0 # remove score from overlaping
+            
+            # 3. new T2:
+            new_t2 = {**tr1.T2, **tr2.T2}
+
+
+            print(tr1.X[i])
+            print(tr2.X[0])
+
+            # get score of that overlap:
+            bb1 = tr1.X[i].bb
+            bb2 = tr2.X[0].bb
+            vf1 = tr1.visual_avg
+            vf2 = tr2.visual_avg
+            
+            t2_score = getProbIVBF(bb1,vf1,bb2,vf2, 0.9)
+            new_t2[tr2] = [t2_score,0.5]
+
+            merged_tr = tr1.getCopy()
+            merged_tr.X = new_x
+            merged_tr.D2 = new_d2
+            merged_tr.T2 = new_t2
+            merged_tr.visual_avg, merged_tr.visual_n = add2AvgTr(tr1, tr2)
+            vrni.append(merged_tr)
+
+            print("tr1 d2:")
+            print(tr1.D2)
+            print("tr2 d2:")
+            print(tr2.D2)
+            print("new d2:")
+            # print(new_d2)
+            new_d2l = list(new_d2.keys())
+            for i in range(len(new_d2)):
+                d = new_d2l[i]
+                print("%d: %s:%f"%(i,str(d), new_d2[d]))
+
+
+
+
+
+        else:
+            print("invalid case, skipping")
+    return vrni
+
+# function gets trajectories that are overlaping
+def getOverlapingTrs(tr_list: list[Trajectory], max_overlap=20):
+    printTrListWithStatsOrdered(tr_list)
+    print("this is getoverlapingtrs")
+
+    for tr in tr_list:
+        for tr2 in tr_list:
+            if(tr == tr2):
+                continue
+            a = tr.X[0].t
+            b = tr.X[-1].t
+            a2 = tr2.X[0].t
+            b2 = tr2.X[-1].t
+
+
+            overlap = b - a2
+            if(a2 > a and a2 < b and b2 > b and overlap <= max_overlap):
+                print("t%d: %d - %d; t%d: %d - %d, overlap: %d"%(tr.not_so_much_unique_id, a, b, tr2.not_so_much_unique_id, a2, b2, overlap))
+                mergeOverlaping(tr, tr2)
+
+            else:
+                print("(not valid case) t%d: %d - %d; t%d: %d - %d, overlap: %d"%(tr.not_so_much_unique_id, a, b, tr2.not_so_much_unique_id, a2, b2, overlap))
+
+
+
+
+def main_d2():
+    global USE_PRECOMPUTED
+    global COMPUTED_FEAT
+    global COMPUTED_FLOW
+
+    print("this is main d2")
+    T_OFFSET = 1
+    D13 = [[]] + readDetFile2('testd2.txt', T_OFFSET)
+
     # init dspace
+    hw = (128,128,3)
+    dspace = DetectionSpace(hw[0], hw[1], None, T_OFFSET, show_flow=False)
+    frame_feat_padding: tuple[int, int, int, int] = getImagePadding(hw) # get feature image offsets
+    # dspace.D.append(D13[T_OFFSET])
+    # frame = np.zeros((hw[0], hw[1], 3)).astype(np.uint8)
     
-    # get frame:
-    # frame0 = getFrameAtI(t_global,FRAMES_PATH)
-    frame0 = np.zeros((1,1,3))
-    # print(frame0)
-    h, w, _ = np.shape(frame0)
-    dspace = DetectionSpace(h,w,time_offset=T_OFFSET, show_flow=False, disable_vis=True)
-    dspace.map = frame0
-    dspace.lastFrame = frame0.copy()
-    D13 = [[]]+readDetFile2(DETS_FILE, T_OFFSET)
-    # GT13: list[list[Detection]] = [[]]+readDetFile2(GT_PATH,T_OFFSET)
-    n = len(D13)-1 # all frames
-    print(n)
-    dspace.D = D13[t_global:]
-    # end init dspace
-    # is sorted!
-    # Q = [
-    #         [  5.612, -3.088, -3.088, -0.   , -0.   , -0.   , -0.   , -0.   , -0.   ],
-    #         [ -3.088,  5.422, -3.088, -0.   , -0.   , -0.   , -0.   , -0.   , -0.   ],
-    #         [ -3.088, -3.088,  5.147, -0.   , -0.   , -0.   , -0.   , -0.   , -0.   ],
-    #         [ -0.   , -0.   , -0.   ,  1.875, -0.   , -0.883, -0.782, -0.6  , -0.   ],
-    #         [ -0.   , -0.   , -0.   , -0.   ,  1.659, -0.995, -0.782, -0.   , -0.995],
-    #         [ -0.   , -0.   , -0.   , -0.883, -0.995,  1.471, -0.   , -0.   , -0.6  ],
-    #         [ -0.   , -0.   , -0.   , -0.782, -0.782, -0.   ,  1.304, -0.782, -0.   ],
-    #         [ -0.   , -0.   , -0.   , -0.6  , -0.   , -0.   , -0.782,  1.   , -0.   ],
-    #         [ -0.   , -0.   , -0.   , -0.   , -0.995, -0.6  , -0.   , -0.   ,  1.   ],
-    #     ]
-    
-    Q = [
-            [ 2.262, -1.231, -1.231, -0.94 , -0.813, -0.813],
-            [-1.231,  2.051, -1.231, -0.813, -0.813, -0.813],
-            [-1.231, -1.231,  2.733, -0.813, -0.813, -1.059],
-            [-0.94 , -0.813, -0.813,  2.267, -1.043, -1.043],
-            [-0.813, -0.813, -0.813, -1.043,  1.738, -1.043],
-            [-0.813, -0.813, -1.059, -1.043, -1.043,  2.148]
-        ]
+    print("[precomputed] using precomputed flow and path")
+    FRAMES_PATH = "/home/gasper/Desktop/synthetic/frames/"
+    COMPUTED_FLOW = "%s../synthetic_pr/synthetic_flow/"%FRAMES_PATH
+    COMPUTED_FEAT = "%s../synthetic_pr/synthetic_feat/"%FRAMES_PATH
 
-    v1 = solveQBP2(Q)
-    v2 = solveQBP(Q)
-    v3 = solveQBP3(Q)
+    # frame = getFrameAtI(T_OFFSET, fpath)
+    # print(frame)
+    # dspace.map = frame
+    # dspace.lastFrame = frame.copy()
 
-    print(v1)
-    print(v2)
-    print(v3)
+    # dspace.showSpace(at_time=2)
+    # dspace.clearSpace()
+
+    # ---
+    t_global = T_OFFSET
+    while True:
+        frame = setFrameFlowAtI(dspace, t_global, frames_path=FRAMES_PATH)
+        features = computeOrGetPCAFeaturesAtI(t_global, frame,None)
+        
+        # 1. init new frame (also compute flow, if needed, same for visual features):
+        next_dets=D13[t_global]
+        frame = setFrameFlowAtI(dspace,t_global, None, frames_path=FRAMES_PATH)
+
+        # get dino features for current frame
+        frame_features = computeOrGetPCAFeaturesAtI(t_global, frame, None)
+
+        # add features to detections:
+        for d_i in next_dets:
+            # get patches: getPatchesInBB + roiPool (in helper func)
+            patches = getFeaturesFromFeatureMapAndPadding3(d_i, feature_map_and_padding=(frame_features, frame_feat_padding))
+            d_i.visual_feat = patches
+
+        t_global = t_global + 1
+        if(t_global == len(D13)):
+            break
+    # ---
 
 
-    return
-    # get trajectories:
-    file = read_tr_file('trs.p')
-    T_OFFSET, idTr_map = file
-    
-    # show trajectories in current time (and image features) ---
-    # print i-th tr
-    # trajectories = merged_merged
-    trajectories: list[Trajectory] = list(idTr_map.values())
-    nn = 15
-    # trajectories: list[Trajectory] = list(idTr_map)
-    # t0 = selectBestTrAroundDetAtTime2(trajectories, GT13[T_OFFSET][0].bb, time_add=nn)
-    t0 = selectBestTrAroundDetAtTime2(trajectories, GT13[0:nn])
-    path = [t0]+connectTrs(t0, trajectories)
 
-    for trr in trajectories:
-        first_d = trr.origin
-        t_i = first_d.t
-        if(t_i <= nn): # search only among few first frames
-            print("at time: %d"%t_i)
-            frame = getFrameAtI(t_i, FRAMES_PATH)
-            dspace.map = frame
-            dspace.lastFrame = frame.copy()
-            gtdet = GT13[t_i][0]
-            drawBoundingBox(dspace.map, bbResize(gtdet.bb,4), [t_i,0,255])
-            drawBoundingBox(dspace.map, first_d.bb, [t_i,255,0])
-            
-            
-            for det in D13[t_i]:
-                drawBoundingBox(dspace.map, bbResize(det.bb,1), [t_i,100,255])
-            trr.detectionSpace = dspace
-            trr.drawToSpace()
-            dspace.showSpace(draw_dets=False, draw_last_dets_bb=False)
-            dspace.clearSpace()
+    # init trajectories
+    tr = []
 
+    t1_d = ([dl[0] for dl in D13[1:21]],[100,250,250])
+    t2_d = ([dl[-1] for dl in D13[15:]],[70,150,255])
+    t3_d = ([dl[0] for dl in D13[24:30]],[20,255,140])
+    tr_x_list = [t1_d, t2_d, t3_d]
     
 
-def read_tr_file(filename='trs.p'):
-    PATH_TO_DET_FILE = 'tracker/'+filename
-    return readTrajectoryFile(PATH_TO_DET_FILE)
+    for tr_xl in tr_x_list:
+        ti = Trajectory(tr_xl[0][0], dspace)
+        ti.build2()
+        ti_x = []
+        iii = 0
+        for d in tr_xl[0]:
+            ti_x.append(TDet_from_Detection(d))
+            addToAvgTr(d.visual_feat, ti)
+            if(iii != 0):
+                ti.D2[d] = 1.0
+            iii = iii+1
+        ti.X = ti_x
+        ti.color = tr_xl[1]
+        tr.append(ti)
+    
+
+    # dspace.showSpace(draw_dets=False, det_center_shape='.')
+    # dspace.clearSpace()
+
+    t_global = T_OFFSET
+    while True:
+        # print("at time: %d"%t_global)
+
+        frame = setFrameFlowAtI(dspace, t_global, frames_path=FRAMES_PATH)
+        features = computeOrGetPCAFeaturesAtI(t_global, frame,None)
+        # showInNamed("window", features)
+        # frame = getFrameAtI(i, fpath)
+        # dspace.map = frame
+        # dspace.lastFrame = frame.copy()
+
+        # 1. init new frame (also compute flow, if needed, same for visual features):
+        next_dets: list[Detection]=D13[t_global]
+        dspace.D.append(next_dets)
+        frame = setFrameFlowAtI(dspace,t_global, None, frames_path=FRAMES_PATH)
+
+        # get dino features for current frame
+        frame_features = computeOrGetPCAFeaturesAtI(t_global, frame, None)
+
+        # add features to detections:
+        for d_i in next_dets:
+            # get patches: getPatchesInBB + roiPool (in helper func)
+            patches = getFeaturesFromFeatureMapAndPadding3(d_i, feature_map_and_padding=(frame_features, frame_feat_padding))
+            d_i.visual_feat = patches
+            # showInNamed("feat1", patches.astype(np.uint8))
+
+        # for t in tr:
+        #     t.drawToSpace()
+        
+        # dspace.showSpace(det_center_shape='.', draw_dets=False)
+        # dspace.clearSpace()
+        # t_global = (t_global % len(D13)) + 1
+        t_global = t_global + 1
+        if(t_global == len(D13)):
+            break
+    
+    dspace.clearSpace()
+    for t in tr:
+        t.drawToSpace()
+    dspace.showSpace(draw_dets=False)
+    dspace.clearSpace()
+    # show avg
+    # i = 0
+    # while True:
+    #     showInNamed("t%d avg"%i, tr[i].visual_avg.astype(np.uint8))
+    #     cv.waitKey(0)
+    #     i = i+1
+    #     if(i == len(tr_x_list)):
+    #         break
+    # merged_tr: list[Trajectory] = mergeOverlaping(tr[0],tr[1])
+
+    # print(getPossibleNextWithMemo(tr[0], tr, type=3))
+
+    
+
+    merged_tr: list[Trajectory] = getMergedHypotheses(tr, type=1, also_overlapping=True)
+    Q=buildQBPMatrixX(merged_tr, type=2)
+    print(Q)
+    v=solveQBP2(Q)
+    print(v)
+
+    print(merged_tr)
+    i = 0
+    # for mt in merged_tr:
+    while True:
+        mt = merged_tr[i]
+        printTrWithStats(mt)
+        # print(mt.X)
+        mt.drawToSpace()
+        dspace.showSpace(draw_dets=False)
+        dspace.clearSpace()
+        i = (i+1)%len(merged_tr)
+# ---
     
 
 
+# MAIN_N=0
+MAIN_N=4
 if __name__ == "__main__":
     # read_tr_file()
     
     if(MAIN_N == 1):
         main_d1()
     elif(MAIN_N == 2):
-        main_d2()
-    elif(MAIN_N == 25):
-        main_d25()
-    elif(MAIN_N == 3):
-        main_d3()
+        visualizeTrs()
     elif(MAIN_N == 4):
-        main_d4()
-    elif(MAIN_N == 5):
-        main_d5()
-    
+        visualizeTrs2()
+    elif(MAIN_N == 3):
+        main_d2()
     else:
         main()
 

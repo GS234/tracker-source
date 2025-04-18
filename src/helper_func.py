@@ -8,13 +8,13 @@ import math
 import traceback
 import os
 import glob
-from FeatureExtractor import roiPool, patchesInBB
+from FeatureExtractor import roiPool, patchesInBB, getImagePadding
 from Detection import Detection, TDet
 from collections import deque # for queue (de - double ended) (solveQBP2)
 
 import sys
 sys.path.append('../RAFT/core') # raft stuff
-from utils import flow_viz
+from utils import flow_viz # type: ignore
 
 # to avoid cyclic import; use it only in type checking
 from typing import TYPE_CHECKING
@@ -453,7 +453,8 @@ def dropRedundant(tr_list:list[Trajectory], red_level=0):
 
 # bounding box deteciton to Detection - generates Detection object with coordinates of center of a bounding box
 def bbDet2Det(bb: list[float], t: int = 0):
-    x, y = bb[0]+bb[2]/2,bb[1]+bb[3]/2
+    # x, y = bb[0]+bb[2]/2,bb[1]+bb[3]/2
+    x,y = getBBCenter(bb)
     return Detection([x,y], t=t, bb=bb)
 
 # function reads i-th frame
@@ -524,7 +525,8 @@ def drawLine(image, x1, x2, color=[0,0,255]):
     # print(n.reshape( (2,1) ))
     n_len = np.sqrt(np.dot(n.T,n))
     if(n_len == 0): # if the same point, no need to draw :)
-        coords2map([(int(x1[1]),int(x1[0]))], image, color=color, overwrite=True)
+        # coords2map([(int(x1[1]),int(x1[0]))], image, color=color, overwrite=True)
+        drawDot(image, x1, color=color)
         return
     n = n/n_len
     n = n.reshape((2,1))
@@ -536,6 +538,30 @@ def drawLine(image, x1, x2, color=[0,0,255]):
     # points = points.astype(np.int32)
     p_list = [(int(x[1]), int(x[0])) for x in points.T]
     coords2map(p_list, image, color=color, overwrite=True)
+
+def drawLine2(image, x1, x2, color=[0,0,255], shape='.'):
+    shape_l = getShape(shape)
+    x1 = np.array(x1)
+    x2 = np.array(x2)
+    n = (x2 - x1).astype(np.int32) # normal from x1 to x2
+    # print(n.reshape( (2,1) ))
+    n_len = np.sqrt(np.dot(n.T,n))
+    if(n_len == 0): # if the same point, no need to draw :)
+        # coords2map([(int(x1[1]),int(x1[0]))], image, color=color, overwrite=True)
+        drawDot(image, x1, color=color)
+        return
+    n = n/n_len
+    n = n.reshape((2,1))
+    
+    values = np.arange(0, int(n_len), 0.1)
+    values = values.reshape((1,len(values)))
+    
+    points = np.dot(n, values) + x1.reshape((2,1))
+    # points = points.astype(np.int32)
+    
+    for x in points.T:
+        # c = (int(x[1]), int(x[0]))
+        drawShape(shape=shape_l, image=image, c=x, color=color)
 
 # method draws bounding box in detection space
 def drawBoundingBox(image, bb: tuple, color: list = [0,255,0]) -> None:
@@ -593,7 +619,7 @@ def add2AvgTr(tr1:Trajectory, tr2:Trajectory):
 
 # function calculates visual distance:
 def getTrVisualSimilarity(tr1:Trajectory, tr2:Trajectory):
-    return getVisualSimilarity(tr1.visual_avg, tr2.visual_avg)
+    return getVisualSimilarity2(tr1.visual_avg, tr2.visual_avg)
 
 def getVisualSimilarity(features1, features2):
     k = 100
@@ -604,12 +630,48 @@ def getVisualSimilarity(features1, features2):
     dist_k = dist/k
     return np.exp(-dist_k)
 
+# similar to ^, but compares as colors (avg feature values)
+def getVisualSimilarity2(features1, features2):
+    # print("<getVisualSimilarity2>")
+    k = 100
+    # print("f1, 2: ")
+    # print(features1)
+    # print(np.mean(features1, axis=2))
+    # print(features2)
+    # v1 = features1.reshape(-1)
+    # v2 = features2.reshape(-1)
+    v1 = np.mean(features1, axis=2).reshape(-1)
+    v2 = np.mean(features2, axis=2).reshape(-1)
+    # print(v1, v2)
+    # print(v1)
+    dist = getVecDist(v1,v2)
+    dist_k = dist/k
+    return np.exp(-dist_k)
+
 def getVecDist(v1, v2):
     diff = v2-v1
     dist = np.sqrt(np.dot(diff, diff))
     return dist
 
+# function calculates score of next detection (d) based on current estimated detection (td)
+# getProbIV -> Iou + Visual
+# prob = a*IoU + (1-a)*feat_sim
+def getProbIV(d:Detection, td:Detection, a=1.0) -> float:
+    return getProbIVBF(d.bb, d.visual_feat, td.bb, td.visual_feat, a=a)
 
+def getProbIVBF(bb1,f1,bb2,f2, a=1.0) -> float:
+    iou_prob = IoUbb(bb1, bb2)
+    visual_prob = 1
+
+    if(f1 is not None and f2 is not None):
+        visual_prob = getVisualSimilarity2(f1, f2)
+        # visual_prob = getVisualSimilarity(f1, f2)
+        # print("[getprobIV] (%.2f,%.2f) - (%.2f,%.2f) visual similarity score: %6.2f"%(bb1[0],bb1[1], bb2[0],bb2[1], visual_prob))
+    elif(not math.isclose(1,a)):
+        print("[warn] visual score could not be calculated. Assuming 1 (totally similar)")
+    # visual_prob = getVisualSimilarity(feat1, feat2)
+    ret_val = a*iou_prob + (1-a)*visual_prob
+    return ret_val
 
 # function is actually very extend4 specific: needs to have feature_map_and_padding with as tuple -> (feature_map, pad_l, pad_u)
 def getFeaturesFromFeatureMapAndPadding(det:Detection, feature_map_and_featExt):
@@ -627,6 +689,16 @@ def getFeaturesFromFeatureMapAndPadding2(det:Detection, feature_map_and_featExt)
     patches = patchesInBB(pca_feat, det.bb, xy_off=[pad_l, pad_u])
     return patches
 
+def getFeaturesFromFeatureMapAndPadding3(det:Detection, feature_map_and_padding, patch_size=14, pooled=True):
+    pca_feat = feature_map_and_padding[0]
+    pad_l, _, pad_u, _ = feature_map_and_padding[1]
+    # get features:
+    patches = patchesInBB(pca_feat, det.bb, xy_off=[pad_l, pad_u], patch_size=patch_size)
+    if(pooled):
+        patches_rp = roiPool(patches, use_2d=False)
+        return patches_rp.astype(np.float64)
+    return patches
+
 def bb2str(bb):
     return "%6.2f,%6.2f,%6.2f,%6.2f"%(bb[0],bb[1],bb[2],bb[3])
 
@@ -635,14 +707,21 @@ def bbResize(bb: list[int], ext_bb_off: int = 1):
     ext_bb = list(np.array(bb[0:2])+ext_bb_off)+list(np.array(bb[2:])-(ext_bb_off*2))
     return ext_bb
 
+def getBBCenter(bb: list[int]):
+    bb = np.array(bb)
+    return bb[0:2] + bb[2:]/2
+
 
 # gets intersection bounds of bounding boxes
 def getBBIntersectionBounds(d1: Detection, d2: Detection):
-    tl_a = np.array(d1.bb[0:2])
-    tl_b = np.array(d2.bb[0:2])
+    return getBBIntersectionBoundsBB(d1.bb, d2.bb)
 
-    br_a = tl_a + np.array(d1.bb[2:])
-    br_b = tl_b + np.array(d2.bb[2:])
+def getBBIntersectionBoundsBB(bb1, bb2):
+    tl_a = np.array(bb1[0:2])
+    tl_b = np.array(bb2[0:2])
+
+    br_a = tl_a + np.array(bb1[2:])
+    br_b = tl_b + np.array(bb2[2:])
 
     xA = max(tl_a[0], tl_b[0])
     yA = max(tl_a[1], tl_b[1])
@@ -653,19 +732,31 @@ def getBBIntersectionBounds(d1: Detection, d2: Detection):
     I_y = yB - yA
     return (I_x, I_y)
 
+# determines if trajectories are overlapping (order of trs is important)
+def isOverlapValid(first: Trajectory, second:Trajectory, overlap_offset=-1):
+    a1, b1 = first.X[0].t, first.X[-1].t
+    a2, b2 = second.X[0].t, second.X[-1].t
+    return (a2 > a1 and a2 < b1 and b2 > b1 and (overlap_offset < 0 or (b1-a2 <= overlap_offset)))
+
+
+
 # calculates iou
 def IoU(d1:Detection, d2: Detection):
+    return IoUbb(d1.bb, d2.bb)
+
+def IoUbb(bb1, bb2):
     # determine the (x, y)-coordinates of the intersection rectangle
-    I_x, I_y = getBBIntersectionBounds(d1,d2)    
+    I_x, I_y = getBBIntersectionBoundsBB(bb1,bb2)    
     
     # compute the area of intersection rectangle
     iou = 0.0
     if((I_x > 0) and (I_y > 0)):
         I = I_x*I_y
-        U = np.prod(d1.bb[2:]) + np.prod(d2.bb[2:]) - I
+        U = np.prod(bb1[2:]) + np.prod(bb2[2:]) - I
         iou =  I/U
 
     return iou
+
 
 # some kind of iou, but for vectors
 def vecScore(a,b, l=0.01):
@@ -679,7 +770,10 @@ def vecScore(a,b, l=0.01):
     c_d = np.sqrt(np.dot(c,c))
     # score = score - (c_d / (a_d+b_d))
     # print(a_d,b_d)
-    return np.exp(-l*(a_d+b_d)) 
+    return np.exp(-l*(a_d+b_d))
+
+def getSelected(v: list[int], trs: list[Trajectory]):
+    return [t[1] for t in zip(v, trs) if t[0] == 1]
 
 # QBP stuff: build matrix (previously in dspace)
 # method builds trajectory interatction matrix
@@ -925,8 +1019,38 @@ shapes = {
     ]),
     '.': np.array([
         [0,0]
+    ]),
+    'full_o': np.array([
+        [-1,-2],
+        [0,-2],
+        [1,-2],
+        [-1,-1],
+        [0,-1],
+        [1,-1],
+        
+        
+        [-1,2],
+        [0,2],
+        [1,2],
+        [-1,1],
+        [0,1],
+        [1,1],
+        
+        
+        [-2,-1],
+        [-2,0],
+        [2,-1],
+        [2,0],
+        [-2,1],
+        [2,1],
+        [-1,0],
+        [1,0],
     ])
 }
+
+# can be used with drawShape
+def getShape(s):
+    return shapes[s]
 
 
 

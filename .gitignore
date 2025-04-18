@@ -9,6 +9,7 @@ src/hypotheses.*
 src/other_mains.py
 src/backup
 src/other/features.png
+src/other/flowEst2.p
 src/*.p
 src/Q.txt
 src/q.txt
@@ -22,5 +23,6 @@ src/options.ini
 src/src_zips
 src/src4.zip
 src/qt.txt
-src/testd.txt
+src/testd*.txt
 src/bash/path*
+src/trs.txt

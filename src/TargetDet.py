@@ -5,7 +5,7 @@ from helper_func import *
 
 class TargetDet(Detection):
     def __init__(self, d:Detection, tr:Trajectory = None):
-        super().__init__(d.x, d.t, d.bb, d.color_hist, d.flow_vector)
+        super().__init__(d.x, d.t, d.bb, d.visual_feat, d.flow_vector)
         self.visual_avg = None
         self.visual_n = 0
         self.color=[50,200,255]

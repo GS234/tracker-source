@@ -60,6 +60,33 @@ class ImagePadder:
     def im_unpad(self, im):
         return im[self.pad_u: (self.h-self.pad_d), self.pad_l: (self.w-self.pad_r)]
 
+def getImagePadding(im_shape, patch_size=14):
+    h, w = im_shape[0], im_shape[1]
+    
+    h_d = h//patch_size
+    w_d = w//patch_size
+
+    # get residual
+    h_res = h-h_d*patch_size
+    w_res = w-w_d*patch_size
+
+    w_pad = patch_size - w_res
+    h_pad = patch_size - h_res
+    if(h_res == 0):
+        h_pad = 0
+    if(w_res == 0):
+        w_pad = 0
+
+    pad_l = w_pad//2
+    pad_r = w_pad - pad_l
+
+    pad_u = h_pad//2
+    pad_d = h_pad - pad_u
+
+    # return paddings
+    return (pad_l, pad_r, pad_u, pad_d)
+
+
 DEVICE = 'cuda'
 # BACKBONE_SIZE = "small" # in ("small", "base", "large" or "giant")
 # BACKBONE_SIZE = "base"
@@ -173,6 +200,8 @@ def roiPool(mat: np.ndarray, r:int = 3, use_2d=False, debug=False) -> np.ndarray
     
     # print("mat_p:",mat_p)
     # showInNamed("mat_p", mat_p[..., ::-1])
+    # showInNamed("abc", mat_p[..., ::-1])
+    
     pshape = np.shape(mat_p)
     h, w = pshape[0:2]
 

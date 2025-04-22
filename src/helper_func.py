@@ -11,6 +11,7 @@ import glob
 from FeatureExtractor import roiPool, patchesInBB, getImagePadding
 from Detection import Detection, TDet
 from collections import deque # for queue (de - double ended) (solveQBP2)
+from configparser import ConfigParser
 
 import sys
 sys.path.append('../RAFT/core') # raft stuff
@@ -200,6 +201,44 @@ def readFlowFile(filename: str):
 def flow2img(flow):
     flo = flow_viz.flow_to_image(flow)
     return flo
+
+def simpleNotTrueFalseParser(s:str):
+    def simpleNotTrueFalseParserList(s:list[str]):
+        if(len(s) == 0): return False
+        if(s[0] == 'True'): return True
+        if(s[0] == 'False'): return False
+        if(s[0] == 'not'): return not simpleNotTrueFalseParserList(s[1:])
+        return False
+    return simpleNotTrueFalseParserList(s.split(' '))
+
+def getOptionNamespace(config_name, init_file: str = 'options.ini'):
+    # print("this is getoptionnamespace")
+    init_data = ConfigParser()
+    init_data.read(init_file)
+    config_name = 'main2'
+    # items = init_data.items(config_name)
+    items = {}
+    try:
+        items = dict(init_data.items(config_name))
+        for k in items:
+            value = items[k]
+            values_split = value.split(' ')
+            if('True' in values_split or 'False' in values_split):
+                items[k] = simpleNotTrueFalseParser(value)
+        # print(items)
+    except:
+        print("[getOptionNamespace] error while reading file '%s'"%init_file)
+    return items
+
+def getOptionNamespaceWdefaultInit(config_name, init_file: str='options.ini'):
+    # get default namespace:
+    default_ns = getOptionNamespace(config_name=config_name, init_file='defaults.ini')
+
+    # get this namespace:
+    this_ns = getOptionNamespace(config_name, init_file)
+    for k in this_ns:
+        default_ns[k] = this_ns[k]
+    return default_ns
 
 # function is used to get vector's magnitude and angle (in terms of detections: velocity, theta)
 def getVecMagAng(vec):
@@ -450,6 +489,29 @@ def dropRedundant(tr_list:list[Trajectory], red_level=0):
             new_l.append(tr_list[i])
     print("[dropRed] dropped %d redundant trajectories."%red_count)
     return new_l
+
+def isRedundant(tr_i:Trajectory, tr_list:list[Trajectory], red_level=0):
+    also_check_origin=True
+    use_duck_test=False
+    if(red_level >= 1):
+        use_duck_test=True
+    if(red_level >= 2):
+        also_check_origin=False
+    
+    already_contained = False
+    for tr_j in tr_list:
+        if(tr_i.T2.keys() == tr_j.T2.keys()):
+            already_contained = True
+            red_count = red_count+1
+            break
+        if(use_duck_test):
+            # check if starts with same tr, ends with same tr, has same number of trs
+            if(trDuckTest(tr_i, tr_j, also_check_origin=also_check_origin)):
+                print(tr_i, " is 'same' as ",tr_j)
+                red_count = red_count+1
+                already_contained = True
+                break
+    return already_contained
 
 # bounding box deteciton to Detection - generates Detection object with coordinates of center of a bounding box
 def bbDet2Det(bb: list[float], t: int = 0):

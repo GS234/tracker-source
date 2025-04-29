@@ -12,6 +12,8 @@ warnings.simplefilter('ignore')
 # CUDA_VISIBLE_DEVICES=2 python3 precompute_flow_feat.py --sequence 'LaSOT_bird-15' --seq_path '/home/gasper/Faks/3_letnik/diplomska/koda/data/frames/' --save_path '/home/gasper/Faks/3_letnik/diplomska/koda/data/' --feat
 # CUDA_VISIBLE_DEVICES=2 python3 precompute_flow_feat.py --sequence='LaSOT_bird-2' --save_path='/home/gasper/disk/Nedokumenti/Faks/precomputed/'
 # CUDA_VISIBLE_DEVICES=2 python3 precompute_flow_feat.py --sequence='LaSOT_bird-2'
+# CUDA_VISIBLE_DEVICES=2 python3 precompute_flow_feat.py --sequence LaSOT_train-7 --seq_path /home/gasper/tracker_ws/workspace/sequences/ --save_path '/home/gasper/precomputed/' --flow
+# CUDA_VISIBLE_DEVICES=3 python3 precompute_flow_feat.py --sequence LaSOT_train-7 --seq_path /home/gasper/tracker_ws/workspace/sequences/ --save_path '/home/gasper/precomputed/' --flow
 
 # flow, feat getters:
 COMPUTE_OR_GET_TEST = not True

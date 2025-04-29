@@ -9,11 +9,13 @@ import math
 
 
 # global vars:
+OPTIONS_TR = getOptionNamespaceWdefaultInit('tr', 'options.ini')
 S1, S2 = 15,15 # default s1,s2
 DATA_ROOT = "../data/"
 X_FFFFFF = [255,255,255]
 GREEN = [0,255,0]
 EXIT_ZONE_OFFSET = 5
+A1 = float(OPTIONS_TR['a1'])
 
 class DetectionSpace:
     def __init__(self, h,w, D: list = None, time_offset = 0, show_flow=True, disable_vis=False):
@@ -42,6 +44,7 @@ class DetectionSpace:
 
         # cv specific: larger window than only cv.imshow
         print(self.hw)
+        print("A1 from tr options is: %.2f"%A1)
         self.disable_vis = disable_vis # to disable visualization (to run on a server without graphic output)
         if(not self.disable_vis):
             scale_f = 1.5
@@ -142,6 +145,7 @@ class DetectionSpace:
     # prob = a*IoU + (1-a)*feat_sim
     # !!! [MOVED TO HELPER FUNC, THIS IS FOR BACKWARD COMPATIBILITY ONLY]
     def getProb4(self, d:Detection, td:TDet, a=1.0) -> float:
+        # print("A1 is %.2f"%a)
         return getProbIV(d, td, a)
         # iou_prob = IoU(d, td)
         # visual_prob = 1
@@ -315,15 +319,16 @@ class DetectionSpace:
 
         # drawBoundingBox(self.map, td.bb, [0,255,255]) # yellow rect is current (debug visualization)
 
-        print("next dets:")
+        # print("next dets:")
         if(t < len(self.D) and t >= 0): # check only if has detections in this layer (and not before 0)
             for d_i in self.D[t]:
                 if(self.isWithinBB(d_i, td)): # 2x isti izracun, zal (na racun preglednosti)
-                    print("- %d: %s"%(d_i.id, str(d_i)))
+                    # print("- %d: %s"%(d_i.id, str(d_i)))
                     # drawBoundingBox(self.map, d_i.bb, [0,255,0]) # debug
                     next_detections.append(d_i) # store detections, for now
                     # detection_prob = self.getProb3(d_i, td, use_iou=use_iou, use_color=use_color)
-                    detection_prob = self.getProb4(d_i, td, a=1.0)
+                    # detection_prob = self.getProb4(d_i, td, a=1.0)
+                    detection_prob = self.getProb4(d_i, td, a=A1)
                     next_detections_probs.append(detection_prob) # get probability score from nearby point
                 else:
                     pass

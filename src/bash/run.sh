@@ -9,7 +9,7 @@ run_python(){
         # when python is done, those new files should get copied to their locations in results
         #echo "python3 main2.py --sequence='${sequences_path}${1}' --dets='${dets_path}${1}.txt' --track='${track_path}'"
         cd "${main_path}" # go to python
-        python3 main2.py --sequence="${sequences_path}${1}" --dets="${dets_path}${1}.txt" --track="${track_path}"
+        python3 main2.py --sequence="${sequences_path}${1}" --dets="${dets_path}${1}.txt" --track="${track_path}" --feat="${precomputed_path}${1}_pr/${1}_feat/"
         cd "${root_dir}" # go back
 
 
@@ -63,11 +63,13 @@ get_other2(){
 root_dir=$(dirname -- "$( readlink -f -- "$0"; )") # this is root directory (where this script is)
 #echo $root_dir
 
+
 sequences_path="$root_dir/workspace/sequences/" # set accordingly to actual directory tree
 track_path="$root_dir/tracker/" # this does not change
 dets_path="$root_dir/dets/" # where detections are
 results_path="$root_dir/results/" # further divided into bb, tracks
 main_path="$root_dir/../python/src/"
+precomputed_path="$root_dir/../precomputed/"
 
 
 # 1.a get sequences (from sequences):

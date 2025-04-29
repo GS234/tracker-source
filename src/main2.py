@@ -10,8 +10,6 @@ import numpy as np
 import copy # for deepcopy (visualization purposes)
 import pickle
 import argparse # for raft model argument parser
-from pathlib import Path
-from configparser import ConfigParser
 np.set_printoptions(suppress=True, precision=3, linewidth=1000)
 
 import warnings
@@ -21,11 +19,12 @@ warnings.simplefilter('ignore')
 # python3 main2.py --sequence='/home/gasper/disk/Nedokumenti/Faks/didi_sequences/GOT-10k_GOT-10k_Val_000014' --dets='/home/gasper/Faks/3_letnik/diplomska/koda/data/detections/GOT-10k_GOT-10k_Val_000014.txt'
 # python3 main2.py --sequence='/home/gasper/disk/Nedokumenti/Faks/didi_sequences/LaSOT_bird-2' --dets='/home/gasper/Faks/3_letnik/diplomska/koda/data/detections/LaSOT_bird-2.txt'
 # python3 main2.py --sequence /home/gasper/disk/Nedokumenti/Faks/didi_sequences/LaSOT_bird-2/ --dets /home/gasper/Faks/3_letnik/diplomska/koda/data/detections/LaSOT_bird-2.txt --feat /home/gasper/disk/Nedokumenti/Faks/didi_sequences/LaSOT_bird-2_feat/
+# python3 main2.py --sequence /home/gasper/disk/Nedokumenti/Faks/didi_sequences/GOT-10k_GOT-10k_Val_000014/ --dets /home/gasper/Faks/3_letnik/diplomska/koda/data/detections/GOT-10k_GOT-10k_Val_000014.txt --feat /home/gasper/disk/Nedokumenti/Faks/didi_sequences/GOT-10k_GOT-10k_Val_000014_feat/ --flow /home/gasper/disk/Nedokumenti/Faks/didi_sequences/GOT-10k_GOT-10k_Val_000014_flow/
 # CUDA_VISIBLE_DEVICES=2 python3 main2.py --sequence='/home/gasper/tracker_ws/workspace/sequences/LaSOT_bottle-12' --dets='/home/gasper/tracker_ws/dets/LaSOT_bottle-12.txt' --track='/home/gasper/tracker_ws/tracker/'
 # CUDA_VISIBLE_DEVICES=2 python3 main2.py --sequence /home/gasper/tracker_ws/workspace/sequences/LaSOT_bottle-12 --dets /home/gasper/tracker_ws/dets/LaSOT_bottle-12.txt --track /home/gasper/tracker_ws/tracker/ --feat /home/gasper/precomputed/LaSOT_bottle-12_pr/LaSOT_bottle-12_feat/
-
-OPTIONS = getOptionNamespaceWdefaultInit('main2', 'defaults.ini')
-# OPTIONS = getOptionNamespaceWdefaultInit('main2', 'options.ini')
+# CUDA_VISIBLE_DEVICES=2 python3 main2.py --sequence /home/gasper/tracker_ws/workspace/sequences/GOT-10k_GOT-10k_Val_000014/ --dets /home/gasper/tracker_ws/dets/GOT-10k_GOT-10k_Val_000014.txt --feat /home/gasper/precomputed/GOT-10k_GOT-10k_Val_000014_pr/GOT-10k_GOT-10k_Val_000014_feat/
+OPTIONS = getOptionNamespaceWdefaultInit('main2', 'options.ini')
+# OPTIONS = getOptionNamespaceWdefaultInit('main2', 'defaults.ini')
 # OPTIONS = getOptionNamespaceWdefaultInit('main2', 'options2.ini') # on server
 # print(OPTIONS)
 
@@ -43,7 +42,6 @@ SAVE_TRAJECTORIES=OPTIONS['save_trajectories'] # switch to save trajectories on 
 EXT_THR=int(OPTIONS['ext_thr']) # maximum number of extrapolation of trajectories (# of consecutive frames without detections for that trajectory (number of relative holes, essentially)) (was 10, now 5)
 T_INIT_S=float(OPTIONS['t_init_s']) # initial score of trajectory (when merge)
 MAX_N_TR_MERGE_ONCE=int(OPTIONS['max_n_tr_merge_once']) # maximum number of merged trajectories at once (to limit recursion depth) (100)
-
 
 # some main-specific functions and constants:
 USE_PRECOMPUTED = OPTIONS['use_precomputed'] # use precomputed optical flow (set to False to calculate it on the go) (flows-path must be set)
@@ -408,7 +406,7 @@ def getPossibleNextWithMemo(tr: Trajectory, tr_list:list[Trajectory], time_windo
     global trToPossibleNext
     # print(tr.id)
     if(tr in trToPossibleNext):
-        # print("is in memo, returning")
+        print("is in memo, returning")
         return trToPossibleNext[tr]
     else:
         # also check overlaping trajectories
@@ -482,10 +480,14 @@ def getMergedHypothesis(tr:Trajectory, tr_list: list[Trajectory], time_window=20
                     all_possible_next = all_possible_next + extendAllPossibleNext(tr, [(tr,T_INIT_S,1.0,[])],tr_possible_next,tr_list, type=type, time_window=time_window, max_n=max_n1, also_overlapping=also_overlapping, drop_redundant_after_n=drop_after_n)
 
             if(not all_possible_next): break
+
             # 2. select and continue
-            Q = buildQBPMatrixX(all_possible_next, type=2)
+            simple, all_else = analyzeTrsWithQ(all_possible_next, type=2)
+            Q = buildQBPMatrixX(all_else, type=2)
+            print(Q)
             v = solveQBP2(Q)
-            next_merged = getSelected(v[0], all_possible_next)
+            next_merged = getSelected(v[0], all_else)
+            next_merged = next_merged + simple
             print("next merged: ")
             printTrListWithStatsOrdered(next_merged)
         return next_merged
@@ -522,8 +524,8 @@ def extendAllPossibleNext(t:Trajectory, collected:list[tuple[Trajectory, float]]
         time_l = collected[0][0].X[0].t
         time_h = time_l
         
-        collected_ids = [x[0].not_so_much_unique_id for x in collected]
-        print(collected_ids)
+        # collected_ids = [x[0].not_so_much_unique_id for x in collected]
+        # print(collected_ids)
         
         for i in range(len(collected)):
             c = collected[i]
@@ -561,8 +563,8 @@ def extendAllPossibleNext(t:Trajectory, collected:list[tuple[Trajectory, float]]
             if(already_in): continue
 
             tr_possible_next = getPossibleNextWithMemo(tr, all_trs, time_window, type, also_overlapping=also_overlapping)
-            len_tr_possible_next = len(tr_possible_next)
-            print("[extendAllPossibleNext] possible next: %d"%len_tr_possible_next)
+            # len_tr_possible_next = len(tr_possible_next)
+            # print("[extendAllPossibleNext] possible next: %d"%len_tr_possible_next)
             collected.append( p ) # add it
             possible_next_trs = extendAllPossibleNext(tr, collected, tr_possible_next, all_trs, type=type, time_window=time_window, max_n=max_n-1, also_overlapping=also_overlapping, drop_redundant_after_n=drop_redundant_after_n)
             collected.pop() # remove it
@@ -618,19 +620,6 @@ def connectTrs(tr1:Trajectory, tr_all:list[Trajectory], max_time=100):
     else:
         return [tr_add] + connectTrs(tr_add, tr_all)
 
-# function returns init variables from options file
-def getSequenceConsts(config_name, init_file: str = 'sequences.ini'):
-    init_data = ConfigParser()
-    init_data.read(init_file)
-    
-    frames_path = init_data.get(config_name,'frames_path')
-    precomputed_flow = init_data.get(config_name,'precomputed_flow')
-    gt_path = frames_path+"../groundtruth.txt"
-    dets_path = init_data.get(config_name,'dets_path')
-    t_offset = init_data.get(config_name,'t_offset')
-    precomputed_feat = init_data.get(config_name, 'precomputed_feat')
-    return int(t_offset), frames_path, dets_path, gt_path, precomputed_flow, precomputed_feat
-
 def read_tr_file(filename='trs.p'):
     PATH_TO_DET_FILE = 'tracker/'+filename
     return readTrajectoryFile(PATH_TO_DET_FILE)
@@ -656,6 +645,8 @@ def main():
 
     # some defaults:
     T_OFFSET = int(OPTIONS['t_offset'])
+    INCLUDE_GT = int(OPTIONS['include_gt'])
+    
 
     # ARGUMENTS
     parser = argparse.ArgumentParser()
@@ -739,6 +730,10 @@ def main():
     D13 = readDetFile2(DETS_FILE) # read detections from file
     D13: list[list[Detection]] = [[]]+D13 # offset it (because time starts at 1, there is nothing on 0)
     GT13: list[list[Detection]] = [[]]+readDetFile2(GT_PATH,T_OFFSET) # ground truth: for testing purposes only
+    if(INCLUDE_GT):
+        print("including gt in dets")
+        merged = mergeDetLists(D13, GT13)
+        D13 = merged
     t_global = T_OFFSET # current time (frame)
     # print(t_global, D13[T_OFFSET: T_OFFSET+10])
 
@@ -1311,10 +1306,11 @@ def main():
     # END EXTEND
 
     print("[FINAL PATH CREATION]")
-    SAVE_PATH_TR = True
-    path_creation_type=1
+    SAVE_PATH_TR = OPTIONS['save_path_tr']
+    path_creation_type=int(OPTIONS['path_creation_type'])
     path: list[Trajectory] = []
     print("path method: %d"%path_creation_type)
+    # 1. use qbp
     if(path_creation_type == 1):
         trajectories: list[Trajectory] = list(idTr_map.values()) # final trajectories
         if(trajectories):
@@ -1345,8 +1341,14 @@ def main():
             # write trajectory to file
             # path2File(path, n_all, RESULT_PATH)
             path2File2(path, n_all, RESULT_PATH)
+    # 3. do not group them, only save trs
+    if(path_creation_type == 3):
+        with open(RESULT_PATH+'all_trs.p', 'wb') as fp:
+            abc = [T_OFFSET, n_all, copy.deepcopy(idTr_map)]
+            pickle.dump(abc, fp)
+
     if(SAVE_PATH_TR):
-        with open(RESULT_PATH+'path.p', 'wb') as fp:
+        with open(RESULT_PATH+'trs.p', 'wb') as fp:
             abc = [T_OFFSET, n_all, copy.deepcopy(path)]
             pickle.dump(abc, fp)
 
@@ -1962,6 +1964,12 @@ def visualizeTrs2():
     t_global = T_OFFSET # current time (frame)
     to_destroy_w = [] # windows to destroy
     # print(t_global, D13[T_OFFSET: T_OFFSET+10])
+    INCLUDE_GT = OPTIONS['include_gt']
+    if(INCLUDE_GT):
+        print("including gt in dets")
+        merged = mergeDetLists(D13, GT13)
+        D13 = merged
+    t_global = T_OFFSET # current time (frame)
 
     # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
     n_res = len(D13) - T_OFFSET
@@ -1989,14 +1997,14 @@ def visualizeTrs2():
 
     # INIT TRAJECTORIES
     trs: list[Trajectory]
-    off, n_all, trs = read_tr_file('trsa.p')
-    off, n_all, path = read_tr_file('path.p')
-    # off, n_all, path = read_tr_file('trs.p')
+    # off, n_all, trs = read_tr_file('trsa.p')
+    # off, n_all, path = read_tr_file('path.p')
+    off, n_all, trs = read_tr_file('trs.p')
     # print("path: ",path)
     # printTrWithStats(path[0])
 
-    all_trs:list[Trajectory] = list(trs.values())
-    # all_trs:list[Trajectory] = trs
+    # all_trs:list[Trajectory] = list(trs.values())
+    all_trs:list[Trajectory] = trs
     for t in all_trs:
         t.detectionSpace = dspace # so we can draw it in it (set valid pointer)
     
@@ -2005,7 +2013,7 @@ def visualizeTrs2():
     printTrListWithStatsOrdered(all_trs)
     # return
     # tr1:Trajectory = all_trs[0] # 1. choose one closest to gt in first frame (to start)
-    tr1:Trajectory = all_trs[2] # bird2
+    # tr1:Trajectory = all_trs[2] # bird2
     # all_trs=path
     # path[0].detectionSpace=dspace
     # # return
@@ -2016,8 +2024,8 @@ def visualizeTrs2():
     # printTrListWithStatsOrdered(next_trs)
     # next_tr = getBestFromList(next_trs)
     # next_trs = [next_tr]
-    path[0].detectionSpace = dspace
-    next_trs = [path[0]]
+    # path[0].detectionSpace = dspace
+    # next_trs = [path[0]]
     
     
     # all_next = []
@@ -2070,7 +2078,7 @@ def visualizeTrs2():
     #     all_trs = [tr1]
     # all_trs = [next_merged[0]]
     # all_trs = next_merged
-    all_trs = next_trs
+    # all_trs = next_trs
     
 
     t_global = T_OFFSET

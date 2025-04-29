@@ -4,13 +4,14 @@ from Detection import Detection, TDet, TDet_from_Detection
 import math
 import copy
 # helper functions:
-from helper_func import getBBCenter, isOverlapValid, getProbIV, getProbIVBF, bbDet2Det, bb2str, detSet2map, getTrColor, drawX, drawO, drawDot, drawLine, drawBoundingBox, getVecMagAng, getMotionVec, getRect, getRectBb, IoU, getFlowToFromAtI,getFlowAtI, getFlowToI, vecScore, getFeaturesFromFeatureMapAndPadding3, addToAvgTr, add2AvgTr, printTrListWithStatsOrdered, printTrWithStats
+from helper_func import getOptionNamespaceWdefaultInit, getBBCenter, isOverlapValid, getProbIVBF, bbDet2Det, bb2str, detSet2map, getTrColor, drawX, drawO, drawDot, drawLine, drawBoundingBox, getVecMagAng, getMotionVec, getRect, getRectBb, IoU, getFlowToFromAtI,getFlowAtI, getFlowToI, vecScore, getFeaturesFromFeatureMapAndPadding3, addToAvgTr, add2AvgTr, printTrListWithStatsOrdered, printTrWithStats
 import cv2 as cv
 # to avoid cyclic import (detection space imports trajectory, trajectory imports detection space)
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from DetectionSpace import DetectionSpace
 
+OPTIONS_TR = getOptionNamespaceWdefaultInit('tr', 'options.ini')
 FLOW_WINDOW_SIZE = 10
 # EST_SCORE = 0.001 # score of estimated det (if there is no detection)
 EST_SCORE = 0.2 # score of estimated det (if there is no detection)
@@ -20,7 +21,7 @@ DET_ADD_THR = 0.2
 MAX_HOLES = 10
 E2 = 0.3
 # A1 = 1.0
-A1 = 0.9
+A1 = float(OPTIONS_TR['a1'])
 
 
 class Trajectory:
@@ -1008,7 +1009,7 @@ class Trajectory:
         return possibleNext
     
     # method gets all possible next trajectories that overlap with this one
-    def getPossibleNextOverlap(self, tr_list: list[Trajectory], time_overlap=20):
+    def getPossibleNextOverlap(self, tr_list: list[Trajectory], time_overlap=20, a=A1):
         possibleNext = []
         for t in tr_list:
             if(isOverlapValid(self, t, overlap_offset=time_overlap)):
@@ -1028,7 +1029,7 @@ class Trajectory:
                     bb2 = t.X[0].bb
                     vf1 = self.visual_avg
                     vf2 = t.visual_avg
-                    probIV = getProbIVBF(bb1,vf1,bb2,vf2, a=A1)
+                    probIV = getProbIVBF(bb1,vf1,bb2,vf2, a=a)
                     probIV = overlapping_part*probIV + (1-overlapping_part)*1
                     possibleNext.append((t, probIV, vec_score, [])) # there are no extrapolated frames, so it is []
         return possibleNext

@@ -22,6 +22,48 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from Trajectory import Trajectory
 
+# to read config file:
+def simpleNotTrueFalseParser(s:str):
+    def simpleNotTrueFalseParserList(s:list[str]):
+        if(len(s) == 0): return False
+        if(s[0] == 'True'): return True
+        if(s[0] == 'False'): return False
+        if(s[0] == 'not'): return not simpleNotTrueFalseParserList(s[1:])
+        return False
+    return simpleNotTrueFalseParserList(s.split(' '))
+
+def getOptionNamespace(config_name, init_file: str = 'options.ini'):
+    # print("this is getoptionnamespace")
+    init_data = ConfigParser()
+    init_data.read(init_file)
+    # config_name = 'main2'
+    # items = init_data.items(config_name)
+    items = {}
+    try:
+        items = dict(init_data.items(config_name))
+        for k in items:
+            value = items[k]
+            values_split = value.split(' ')
+            if('True' in values_split or 'False' in values_split):
+                items[k] = simpleNotTrueFalseParser(value)
+        # print(items)
+    except:
+        print("[getOptionNamespace] error while reading file '%s'"%init_file)
+    return items
+
+def getOptionNamespaceWdefaultInit(config_name, init_file: str='options.ini'):
+    # get default namespace:
+    default_ns = getOptionNamespace(config_name=config_name, init_file='defaults.ini')
+
+    # get this namespace:
+    this_ns = getOptionNamespace(config_name, init_file)
+    for k in this_ns:
+        default_ns[k] = this_ns[k]
+    return default_ns
+# OPTIONS_TR = getOptionNamespaceWdefaultInit('tr', 'options.ini')
+# A1 = float(OPTIONS_TR['a1']) # to set default A1 value for getprobiv
+A1 = 1.0
+
 
 def printTrWithStats(t: Trajectory, i_t=None, also_T2k=False, add_to_end = ""):
     s = "t%-5s (t%-5s) o=[%-3d,%-3d], c=%-3d, len=%-4d, score=%9.4f %5d - %-5d, n_merged=%3d (fin:%s)" % \
@@ -187,6 +229,23 @@ def readDetFile2(filename: str, time_off=1):
             frame_i = frame_i + 1
     return detections
 
+# merges two detection lists together (assuming same offset ( t(dl1[0]) == t(dl2[0]) ))
+def mergeDetLists(dl1: list[list[Detection]],dl2: list[list[Detection]]):
+    # assume same offset (both start at same time)
+    dmerged = dl1
+    other = dl2
+    if(len(dl2) > len(dl1)):
+        dmerged = dl2
+        other = dl1
+    i = 0
+    while (i < len(dmerged)):
+        if(i < len(other)):
+            dmerged[i] = dmerged[i] + other[i]
+        else: # other list ended, no need to continue
+            break
+        i = i+1
+    return dmerged
+
 def getFileAtI(i, path, ending='.npy'):
     frame_i = f'{i:08}'
     return np.load(path+frame_i+ending)
@@ -202,43 +261,18 @@ def flow2img(flow):
     flo = flow_viz.flow_to_image(flow)
     return flo
 
-def simpleNotTrueFalseParser(s:str):
-    def simpleNotTrueFalseParserList(s:list[str]):
-        if(len(s) == 0): return False
-        if(s[0] == 'True'): return True
-        if(s[0] == 'False'): return False
-        if(s[0] == 'not'): return not simpleNotTrueFalseParserList(s[1:])
-        return False
-    return simpleNotTrueFalseParserList(s.split(' '))
-
-def getOptionNamespace(config_name, init_file: str = 'options.ini'):
-    # print("this is getoptionnamespace")
+# function returns init variables from options file
+def getSequenceConsts(config_name, init_file: str = 'sequences.ini'):
     init_data = ConfigParser()
     init_data.read(init_file)
-    config_name = 'main2'
-    # items = init_data.items(config_name)
-    items = {}
-    try:
-        items = dict(init_data.items(config_name))
-        for k in items:
-            value = items[k]
-            values_split = value.split(' ')
-            if('True' in values_split or 'False' in values_split):
-                items[k] = simpleNotTrueFalseParser(value)
-        # print(items)
-    except:
-        print("[getOptionNamespace] error while reading file '%s'"%init_file)
-    return items
-
-def getOptionNamespaceWdefaultInit(config_name, init_file: str='options.ini'):
-    # get default namespace:
-    default_ns = getOptionNamespace(config_name=config_name, init_file='defaults.ini')
-
-    # get this namespace:
-    this_ns = getOptionNamespace(config_name, init_file)
-    for k in this_ns:
-        default_ns[k] = this_ns[k]
-    return default_ns
+    
+    frames_path = init_data.get(config_name,'frames_path')
+    precomputed_flow = init_data.get(config_name,'precomputed_flow')
+    gt_path = frames_path+"../groundtruth.txt"
+    dets_path = init_data.get(config_name,'dets_path')
+    t_offset = init_data.get(config_name,'t_offset')
+    precomputed_feat = init_data.get(config_name, 'precomputed_feat')
+    return int(t_offset), frames_path, dets_path, gt_path, precomputed_flow, precomputed_feat
 
 # function is used to get vector's magnitude and angle (in terms of detections: velocity, theta)
 def getVecMagAng(vec):
@@ -718,10 +752,11 @@ def getVecDist(v1, v2):
 # function calculates score of next detection (d) based on current estimated detection (td)
 # getProbIV -> Iou + Visual
 # prob = a*IoU + (1-a)*feat_sim
-def getProbIV(d:Detection, td:Detection, a=1.0) -> float:
+def getProbIV(d:Detection, td:Detection, a=A1) -> float:
     return getProbIVBF(d.bb, d.visual_feat, td.bb, td.visual_feat, a=a)
 
-def getProbIVBF(bb1,f1,bb2,f2, a=1.0) -> float:
+def getProbIVBF(bb1,f1,bb2,f2, a=A1) -> float:
+    # print("a is: %.2f"%a)
     iou_prob = IoUbb(bb1, bb2)
     visual_prob = 1
 
@@ -900,6 +935,8 @@ def solveQBP(Q):
 # multibranch-ascent qbp solver (seems to work fine, for now):
 # basically bfs over specifically generated 0-1 space + some special conditions (see working notes)
 def solveQBP2(Q: np.array, debug=False):
+    h,w = np.shape(Q)
+    print("solving QBP (%dx%d)"%(h,w))
     # 1. init variables
     n_el,_ = np.shape(Q) # length of vector - number of elements
     v = np.zeros(n_el).astype(np.uint8)

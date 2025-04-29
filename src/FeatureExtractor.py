@@ -110,6 +110,7 @@ class FeatureExtractor():
         # self.model = torch.hub.load(repo_or_dir="facebookresearch/dinov2", model=backbone_name, patch_size=patch_size)
         # self.model = torch.hub.load(repo_or_dir="/home/gasper/python/dinov2/facebookresearch_dinov2_main/", source='local', trust_repo=True, model=backbone_name, patch_size=patch_size)
         self.model = torch.hub.load(repo_or_dir="/home/gasper/.cache/torch/hub/facebookresearch_dinov2_main/", source='local', trust_repo=True, model=backbone_name, patch_size=patch_size)
+        # self.model = torch.hub.load(repo_or_dir="facebookresearch/dinov2", source='github', trust_repo=True, model=backbone_name, patch_size=patch_size)
         self.model.to(DEVICE)
         self.model.eval()
 

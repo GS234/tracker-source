@@ -23,9 +23,12 @@ src/options.ini
 src/options2.ini
 src/sequences.ini
 src/src_zips
-src/src4.zip
+src/src*.zip
 src/qt.txt
 src/testd*.txt
 src/bash/path*
 src/trs.txt
 src/debug.txt
+src/partial_src.zip
+*.txt
+*.p

@@ -59,6 +59,28 @@ get_other2(){
         echo $res
 }
 
+#first path must be path to list of all sequences
+get_other3(){
+        path_d="${1}"
+        path_r="${2}"
+
+        # seq_1=$(cd $path_d && ls | grep .txt)
+        # seq_1=${seq_1//.txt/ } # remove .txt
+        seq_1=$(cd $path_d && $(cat "list.txt"))
+        
+
+        seq_2=$(cd $path_r && ls -d */)
+        seq_2=${seq_2//\// }
+
+        res=$seq_1
+        for s in $(echo "${seq_2}"); do
+        {
+                #echo $s
+                res=${res//$s / }
+        }; done
+        echo $res
+}
+
 
 root_dir=$(dirname -- "$( readlink -f -- "$0"; )") # this is root directory (where this script is)
 #echo $root_dir

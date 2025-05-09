@@ -127,106 +127,6 @@ def getPureTrN(Q):
     # print(num)
     return num
 
-# Q matrix analyze
-# function checks if trajectory in Q at i is pure
-def isPure(Q,i):
-    vrni = False
-    n_nonzero = nNonzero(Q[:,i])
-    if(n_nonzero == 1):
-        vrni=True
-    return vrni
-
-# function checks number of interactions
-def nNonzero(q_column):
-    n_nonzero = np.sum(np.where(np.isclose(q_column, 0), 0, 1))
-    return n_nonzero
-
-# function gets list of trajectories, builds Q, analyzes it, and returns new Q and trajectory list with trajectories, that are selected
-# returns (simple, all_else)
-def analyzeTrsWithQ(tr_list: list[Trajectory], type=1):
-    # 1. build Q:
-    Q = buildQBPMatrixX(tr_list, type=type)
-    # Q[0,19] = 0
-    # Q[19,0] = 0
-    # Q[0,18] = -1
-    # Q[18,0] = -1
-    # Q[0,2] = -1
-    # Q[2,0] = -1
-    n, _ = np.shape(Q)
-    
-    # 2. build list with number of interactions based on Q
-    list_c = []
-    for i in range(n):
-        x = Q[:,i]
-        list_c.append(nNonzero(x))
-    # print(Q)
-    # print(list_c)
-
-    # marker array (mark which trs to include and which not to)
-    marker_array = np.ones(n).astype(np.bool_)
-
-    simple_trs = []
-    # 1. pass: get pure trs to simple_trs
-    for i in range(n):
-        tr_i = tr_list[i]
-        if(list_c[i] == 1):
-            # this is pure tr, does not interact with any other
-            simple_trs.append(tr_i)
-            marker_array[i] = False # mark it as false
-
-    # 2. pass: check those that have 2 interactions: if they interact with tr with same not_so_much_unique_id,
-    # and also that one interacts with only 2, then use one that has higher score
-    for i in range(n):
-        if(not marker_array[i]): continue # skip those that have been filtered out in 1. pass
-        tr_i = tr_list[i]
-        if(list_c[i] == 2):
-            # find next with same nsmuid, if it also has 2 trs, add it to simple trs:
-            j = i+1
-            while(j < n): # simulation of classic for loop from java/c
-                if(not marker_array[j]): 
-                    j = j + 1
-                    continue # never mind those
-                tr_j = tr_list[j]
-                if(list_c[j] == 2):
-                    # this is for those, that are actually same one, but not including last one (terminated, duplicated)
-                    if(tr_j.not_so_much_unique_id == tr_i.not_so_much_unique_id):
-                        # add one that has bigger score:
-                        if(Q[i,i] > Q[j,j]):
-                            simple_trs.append(tr_i)
-                        else:
-                            simple_trs.append(tr_j)
-
-                        # mark both as false
-                        marker_array[i] = False
-                        marker_array[j] = False
-                    elif(not np.isclose(Q[i,j], 0)):
-                        # solve qbp for those two:
-                        a = [Q[i,i],Q[j,j],(Q[i,i]+Q[j,j])+2*Q[i,j]]
-                        max_a = 0
-                        max_i = 0
-                        for k in range(3):
-                            if(a[k] >= max_a):
-                                max_a = a[k]
-                                max_i = k+1
-                        if(max_i == 1): # if max is 1
-                            simple_trs.append(tr_i)
-                        if(max_i == 2): # if max is 2
-                            simple_trs.append(tr_j)
-                        if(max_i == 3): # if max is both
-                            simple_trs.append(tr_i)
-                            simple_trs.append(tr_j)
-                        marker_array[i] = False
-                        marker_array[j] = False
-                j = j + 1
-    
-    # 3. pass: collect all trajectories, that are left:
-    all_else: list[Trajectory] = []
-    for i in range(n):
-        if(marker_array[i]): all_else.append(tr_list[i])
-    # print(marker_array)
-    return simple_trs, all_else
-# --------------------
-
 # function checks whether trajectory tr is within max_dist radius around detections (usually one, but supports many)
 def isWithinDets(tr:Trajectory, dets:list[Detection], max_dist=150, also_return_dists=False):
     if(not also_return_dists):
@@ -462,8 +362,10 @@ def getMergedHypothesis(tr:Trajectory, tr_list: list[Trajectory], time_window=20
     if(not with_qbp):
         return all_possible_next
     else:
-        Q = buildQBPMatrixX(all_possible_next, type=2)
-        v = solveQBP2(Q)
+        # all_possible_next.sort(key=lambda x: x.getScoreII(), reverse=True) # sort to minimize chance of getting stuck in some local minimum
+        # Q = buildQBPMatrixX(all_possible_next, type=2)
+        # v = solveQBP2(Q)
+        v = buildGroupSolve(all_possible_next, type=2)
         next_merged = getSelected(v[0], all_possible_next)
         continue_loop = True # flag is set to false, when none of the trajectories can be further extended (lack of presence of 'possible next')
         while(continue_loop):
@@ -483,9 +385,11 @@ def getMergedHypothesis(tr:Trajectory, tr_list: list[Trajectory], time_window=20
 
             # 2. select and continue
             simple, all_else = analyzeTrsWithQ(all_possible_next, type=2)
-            Q = buildQBPMatrixX(all_else, type=2)
-            print(Q)
-            v = solveQBP2(Q)
+            # # # all_else.sort(key=lambda x: x.getScoreII(), reverse=True) # sort to minimize chance of getting stuck in some local minimum
+            # # # Q = buildQBPMatrixX(all_else, type=2)
+            # # print(Q)
+            # v = solveQBP2(Q)
+            v = buildGroupSolve(all_else, type=2)
             next_merged = getSelected(v[0], all_else)
             next_merged = next_merged + simple
             print("next merged: ")
@@ -579,7 +483,7 @@ def extendAllPossibleNext(t:Trajectory, collected:list[tuple[Trajectory, float]]
         print("DROPING REDUNDANT: ----------------------------------------------------------------------------------------- IOIOIOIOIOOIOIOIOIOIOIO")
         mtr_hypotheses = dropRedundant(mtr_hypotheses, red_level=2)
         # print("length (previous, new): %d, %d"%(mtr_len, len(mtr_hypotheses)))
-    print(mtr_len)
+    # print(mtr_len)
     return mtr_hypotheses
 
 # function to write trajectory to file
@@ -792,7 +696,7 @@ def main():
     print("init dspace: ")
     D13_init = D13[t_global] # init with those from current time step
     dspace.D.append(D13_init)
-    print(dspace.D)
+    # print(dspace.D)
     t_global = t_global+1
     n_res = n_res-1 # there is one frame less - [FIX]
     # END INIT DSPACE
@@ -1013,20 +917,17 @@ def main():
             pure_trs, not_pure = analyzeTrsWithQ(tr) # analyze, drop out pure and copies of same (add pure, do qbp with all else)
             
             # 6.2 build Q with trs, that are not pure:
-            not_pure.sort(key=lambda x: x.getScore2(), reverse=True) # sort to minimize chance of getting stuck in some local minimum (there ARE issues with qbp-solver)
-            Q = buildQBPMatrixX(not_pure, type=1)
-
-            
-            # print("pure:")
-            # printTrListWithStatsOrdered(pure_trs)
-            # print("not pure:")
-            # printTrListWithStatsOrdered(not_pure)
 
             # 6.3 solve QBP
-            # np.savetxt("Q2.txt",Q, fmt="%7.3f")
-            print(Q)
+            # np.savetxt("Q.txt",Q, fmt="%7.3f")
+            # with open('./tr.p', 'wb') as fp:
+            #     pickle.dump(not_pure, fp)
+            # not_pure.sort(key=lambda x: x.getScore2(), reverse=True) # sort to minimize chance of getting stuck in some local minimum (there ARE issues with qbp-solver)
+            # Q = buildQBPMatrixX(not_pure, type=1)
+            # print(Q)
             print("solving Q ...")
-            v = solveQBP2(Q)
+            # v = solveQBP2(Q)
+            v = buildGroupSolve(not_pure, type=1)
             print("done solving, v:")
             print(v)
 
@@ -1174,13 +1075,16 @@ def main():
 
                 # q-matrix analysis (type 2 this time)
                 simple_tr,all_else = analyzeTrsWithQ(merged_merged, type=2)
-                all_else.sort(key=lambda x: x.getScoreII(), reverse=True) # sort to minimize chance of getting stuck in some local minimum
-                Q = buildQBPMatrixX(all_else, type=2) # build q with all trs that have not been filtered by analysis
 
                 # SOLVE QBP:
                 # print(Q)
                 print("solving (merge) ...")
-                res = solveQBP2(Q)
+                
+                # all_else.sort(key=lambda x: x.getScoreII(), reverse=True) # sort to minimize chance of getting stuck in some local minimum
+                # Q = buildQBPMatrixX(all_else, type=2) # build q with all trs that have not been filtered by analysis
+                # print(Q)
+                # res = solveQBP2(Q)
+                res = buildGroupSolve(all_else,type=2)
                 v = res[0]
                 # res = solveQBP(Q)
                 print("done solving, v:")
@@ -1842,7 +1746,6 @@ def extendToEnd2(tr_: Trajectory, tr_list: list[Trajectory], time_window=100, al
     print("this is extendToEnd2")
     # 0. INIT LIST
     all_trs: list[Trajectory] = [tr_]
-    other_trs: list[Trajectory] = []
     continue_flag = True
     n_steps = 5 # maximum number of restarts
     max_n = 5 # maximum recursion depth of extendAllPossibleNext in getMergedHypothesis
@@ -1856,8 +1759,11 @@ def extendToEnd2(tr_: Trajectory, tr_list: list[Trajectory], time_window=100, al
             all_possible_next = all_possible_next + getMergedHypothesis(tr,tr_list=tr_list, time_window=time_window, type=1, also_overlapping=True, reset_memo=True, also_drop_redundant=also_drop_redundant,max_n = max_n, with_qbp=with_qbp) # 2. extend all possible from this one
         print("[extend2end2] all possible next (n): %d"%len(all_possible_next))
         # 1st solve qbp to remove unnecessary ones
-        Q = buildQBPMatrixX(all_possible_next, type=2)
-        v = solveQBP2(Q)
+        
+        # all_possible_next.sort(key=lambda x: x.getScoreII(), reverse=True) # sort to minimize chance of getting stuck in some local minimum
+        # Q = buildQBPMatrixX(all_possible_next, type=2)
+        # v = solveQBP2(Q)
+        v = buildGroupSolve(all_possible_next, type=2)
         all_possible_next = getSelected(v[0], all_possible_next)
         all_trs = all_possible_next
 
@@ -1904,12 +1810,42 @@ def extendToEnd2(tr_: Trajectory, tr_list: list[Trajectory], time_window=100, al
             all_trs = next_trs
 
         # 2nd qbp
-        Q=buildQBPMatrixX(all_trs, type=2)
-        v = solveQBP2(Q)
+        # all_trs.sort(key=lambda x: x.getScoreII(), reverse=True) # sort to minimize chance of getting stuck in some local minimum
+        # Q=buildQBPMatrixX(all_trs, type=2)
+        # v = solveQBP2(Q)
+        v = buildGroupSolve(all_possible_next, type=2)
         all_trs = getSelected(v[0], all_trs)
         ii = ii+1
         continue_flag = can_any_continue # if there are hypotheses, that can be extended, then continue, otherwise do not
     return all_trs
+
+def extendToEnd2WithSections(tr_: Trajectory, tr_list: list[Trajectory], time_window=100, group_timew=200, also_drop_redundant=False):
+    # find group with initial tr:
+    groups = groupTrs(tr_list, timew=group_timew)
+    start_group = 0
+    for i in range(len(groups)):
+        g = groups[i]
+        if(tr_ in g):
+            start_group = i
+            break
+    print("tr is in group %d"%start_group)
+    
+    t_ext = [tr_]
+    for i in range(start_group+1, len(groups)):
+        g = groups[i]
+        t_next = []
+        for t in t_ext:
+            trs = extendToEnd2(t, tr_list=g, time_window=time_window, also_drop_redundant=also_drop_redundant)
+            t_next = t_next + trs
+        # print("group %d:"%(i))
+        # printTrListWithStatsOrdered(g)
+        # print("trs:")
+        # printTrListWithStatsOrdered(trs)
+        t_ext = t_next
+        # return
+    # print("all:")
+    # printTrListWithStatsOrdered(t_ext)
+    return t_ext
 
 # function gets best trajectory based on score (higher is better) and number of merged (lower is better)
 def getBestFromList(tr_list: list[Trajectory]):
@@ -2129,6 +2065,143 @@ def visualizeTrs2():
         t_global = t_global + 1
 
 
+def mergeAndvisualizeAllTrs():
+    global OPTIONS
+    global PRECOMPUTED_FEAT_PATH
+    global PRECOMPUTED_FLOW_PATH
+    
+    # set default to tracker ws (./tracker/...)
+    global COMPUTED_FLOW
+    global COMPUTED_FEAT
+    global RESULT_PATH
+    global USE_PRECOMPUTED
+    # print("this is mergeAndVisualizeAllTrs:")
+    # _, _, all_trs = readTrajectoryFile("./tracker/all_trs.p")
+    # all_trs = list(all_trs.values())
+    # # printTrListWithStatsOrdered(all_trs)
+    # # print()
+
+    # sequence_str = OPTIONS['sequence']
+    # T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getSequenceConsts(sequence_str)
+
+    
+    # D13: list[list[Detection]] = readDetFile2(DETS_FILE) # read detections from file
+    # D13 = [[]]+D13 # offset it (because time starts at 1, there is nothing on 0)
+    # GT13: list[list[Detection]] = [[]]+readDetFile2(GT_PATH,T_OFFSET) # ground truth: for testing purposes only
+
+    # t0: Trajectory = selectBestTrAroundDetAtTime(all_trs, GT13[T_OFFSET][0].bb)
+    # trs = extendToEnd2WithSections(t0, all_trs, also_drop_redundant=True)
+    # printTrListWithStatsOrdered(trs)
+    # t00 = getBestFromList(trs)
+    # printTrWithStats(t00)
+    # return
+    # SEQUENCES:
+    
+    sequence_str = OPTIONS['sequence']
+    T_OFFSET, FRAMES_PATH, DETS_FILE, GT_PATH, PRECOMPUTED_FLOW_PATH, PRECOMPUTED_FEAT_PATH = getSequenceConsts(sequence_str)
+    if(USE_PRECOMPUTED):
+        COMPUTED_FLOW = PRECOMPUTED_FLOW_PATH
+        COMPUTED_FEAT = PRECOMPUTED_FEAT_PATH
+
+    # INIT
+    D13: list[list[Detection]] = readDetFile2(DETS_FILE) # read detections from file
+    D13 = [[]]+D13 # offset it (because time starts at 1, there is nothing on 0)
+    GT13: list[list[Detection]] = [[]]+readDetFile2(GT_PATH,T_OFFSET) # ground truth: for testing purposes only
+    t_global = T_OFFSET # current time (frame)
+    to_destroy_w = [] # windows to destroy
+    # print(t_global, D13[T_OFFSET: T_OFFSET+10])
+    INCLUDE_GT = OPTIONS['include_gt']
+    if(INCLUDE_GT):
+        print("including gt in dets")
+        merged = mergeDetLists(D13, GT13)
+        D13 = merged
+    t_global = T_OFFSET # current time (frame)
+
+    # actual offset for detections list is: T_OFFSET - n (because there are some detections before global offset (initial trajectories))
+    n_res = len(D13) - T_OFFSET
+    n_all = n_res
+    
+    
+    # INIT DSPACE
+    frame = getFrameAtI(t_global,FRAMES_PATH)
+    h,w,_ = np.shape(frame)
+    dspace = DetectionSpace(h,w, time_offset=T_OFFSET, show_flow=False, disable_vis=False) # also pass time offset for using correct indices | no visualization on run all
+
+    # set last frame
+    dspace.lastFrame = frame.copy()
+    dspace.map = frame
+
+    # return
+    print("init dspace: ")
+    D13_init = D13[t_global] # init with those from current time step
+    # dspace.D.append(D13_init)
+    dspace.D.append(D13[:])
+    t_global = t_global+1
+    n_res = n_res-1 # there is one frame less - [FIX]
+    # END INIT DSPACE
+
+
+    # INIT TRAJECTORIES
+    trs: list[Trajectory]
+    off, n_all, trs = read_tr_file('all_trs.p')
+    # off, n_all, trs = read_tr_file('trs.p')
+    
+    
+    trajectories: list[Trajectory] = list(trs.values()) # final trajectories
+    print("all trs:")
+    printTrListWithStatsOrdered(trajectories)
+    t0: Trajectory = selectBestTrAroundDetAtTime(trajectories, GT13[T_OFFSET][0].bb)
+    # next_trs = extendToEnd2(t0, trajectories, also_drop_redundant=True)
+    next_trs = extendToEnd2WithSections(t0, trajectories, also_drop_redundant=True)
+    # return
+
+    printTrListWithStatsOrdered(next_trs)
+    next_tr: Trajectory = getBestFromList(next_trs)
+    next_tr.detectionSpace = dspace
+    all_trs = [next_tr]
+    # return
+    
+
+    t_global = T_OFFSET
+    while t_global <= n_all:
+        print("[@ %d / %d (%d%%)]"%(t_global, n_all, int((float(t_global)/float(n_all))*100) ))
+        
+        # 1. init new frame (also compute flow, if needed, same for visual features):
+        next_dets=D13[t_global]
+        # print("this frame's dets:")
+        # print("next dets: ",next_dets)
+        dspace.D.append(next_dets)
+        frame = setFrameFlowAtI(dspace,t_global, None, frames_path=FRAMES_PATH)
+        # print("current trs:")
+        for t in all_trs:
+            first_t = t.X[0].t
+            if(first_t <= t_global):
+                color = [150,150,150] # gray
+                if(t.X[-1].t >= t_global):
+                    # printTrWithStats(t)
+                    color = t.color
+                    # if(t in path):
+                    #     color = [0,0,255]
+                    t.drawToSpace(color, at_t=t_global, max_len=20)
+                    if((t_global-first_t) < len(t.X)):
+                        det = t.X[t_global - first_t]
+                        drawBoundingBox(dspace.map, bbResize(det.bb, 1), t.color)
+                        drawX(dspace.map, det.x)
+                    else:
+                        print("[WARN] t_global is %d, %s"%(t_global, str(t.X[-5:])))
+                else:
+                    t.drawToSpace(color, at_t=t_global, max_len=20)
+        
+        # draw gt:
+        gtdet = GT13[t_global]
+        # print(gtdet)
+        if(gtdet):
+            drawBoundingBox(dspace.map, bbResize(gtdet[0].bb,-1), [0,0,255])
+        dspace.showSpace(draw_dets=False, draw_last_dets_bb=False)
+        dspace.clearSpace()
+        t_global = t_global + 1
+
+
 
 
 # merge overlaping
@@ -2231,9 +2304,6 @@ def getOverlapingTrs(tr_list: list[Trajectory], max_overlap=20):
 
             else:
                 print("(not valid case) t%d: %d - %d; t%d: %d - %d, overlap: %d"%(tr.not_so_much_unique_id, a, b, tr2.not_so_much_unique_id, a2, b2, overlap))
-
-
-
 
 def main_d2():
     global USE_PRECOMPUTED
@@ -2399,15 +2469,21 @@ def main_d2():
 # MAIN_N=4
 if __name__ == "__main__":
     # read_tr_file()
-    
-    if(MAIN_N == 1):
-        main_d1()
-    elif(MAIN_N == 2):
-        visualizeTrs()
-    elif(MAIN_N == 4):
-        visualizeTrs2()
-    elif(MAIN_N == 3):
-        main_d2()
-    else:
+    if(MAIN_N == 0):
         main()
+    else:
+        if(MAIN_N == 1):
+            main_d1()
+        elif(MAIN_N == 2):
+            visualizeTrs()
+        elif(MAIN_N == 4):
+            visualizeTrs2()
+        elif(MAIN_N == 3):
+            main_d2()
+        elif(MAIN_N == 5):
+            mergeAndvisualizeAllTrs()
+        else:
+            import other_mains2
+            other_mains2.mainInitSelect(MAIN_N, OPTIONS)
+
 

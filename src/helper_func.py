@@ -12,6 +12,7 @@ from FeatureExtractor import roiPool, patchesInBB, getImagePadding
 from Detection import Detection, TDet
 from collections import deque # for queue (de - double ended) (solveQBP2)
 from configparser import ConfigParser
+from functools import cmp_to_key
 
 import sys
 sys.path.append('../RAFT/core') # raft stuff
@@ -1057,6 +1058,240 @@ def allNextCombs(bin_arr):
             j = j+1
     return ret_m
 # ---------
+
+# Q matrix analyze (moved from main2)
+# function checks if trajectory in Q at i is pure
+def isPure(Q,i):
+    vrni = False
+    n_nonzero = nNonzero(Q[:,i])
+    if(n_nonzero == 1):
+        vrni=True
+    return vrni
+
+# function checks number of interactions
+def nNonzero(q_column):
+    n_nonzero = np.sum(np.where(np.isclose(q_column, 0), 0, 1))
+    return n_nonzero
+
+# function gets list of trajectories, builds Q, analyzes it, and returns new Q and trajectory list with trajectories, that are selected
+# returns (simple, all_else)
+def analyzeTrsWithQ(tr_list: list[Trajectory], type=1, max_n=5):
+    # 1. build Q:
+    Q = buildQBPMatrixX(tr_list, type=type)
+    # Q[0,19] = 0
+    # Q[19,0] = 0
+    # Q[0,18] = -1
+    # Q[18,0] = -1
+    # Q[0,2] = -1
+    # Q[2,0] = -1
+    n, _ = np.shape(Q)
+    
+    # 2. build list with number of interactions based on Q
+    list_c = []
+    for i in range(n):
+        x = Q[:,i]
+        list_c.append(nNonzero(x))
+    # print(Q)
+    # print(list_c)
+
+    # marker array (mark which trs to include and which not to)
+    marker_array = np.ones(n).astype(np.bool_)
+
+    simple_trs = []
+    # 1. pass: get pure trs to simple_trs
+    for i in range(n):
+        tr_i = tr_list[i]
+        if(list_c[i] == 1):
+            # this is pure tr, does not interact with any other
+            simple_trs.append(tr_i)
+            marker_array[i] = False # mark it as false
+
+    # 2. pass: check those that have 2 interactions: if they interact with tr with same not_so_much_unique_id,
+    # and also that one interacts with only 2, then use one that has higher score
+    for i in range(n):
+        if(not marker_array[i]): continue # skip those that have been filtered out in 1. pass
+        tr_i = tr_list[i]
+        if(list_c[i] == 2):
+            # find next with same nsmuid, if it also has 2 trs, add it to simple trs:
+            j = i+1
+            while(j < n): # simulation of classic for loop from java/c
+                if(not marker_array[j]): 
+                    j = j + 1
+                    continue # never mind those
+                tr_j = tr_list[j]
+                if(list_c[j] == 2):
+                    # this is for those, that are actually same one, but not including last one (terminated, duplicated)
+                    if(tr_j.not_so_much_unique_id == tr_i.not_so_much_unique_id):
+                        # add one that has bigger score:
+                        if(Q[i,i] > Q[j,j]):
+                            simple_trs.append(tr_i)
+                        else:
+                            simple_trs.append(tr_j)
+
+                        # mark both as false
+                        marker_array[i] = False
+                        marker_array[j] = False
+                    elif(not np.isclose(Q[i,j], 0)):
+                        # solve qbp for those two:
+                        a = [Q[i,i],Q[j,j],(Q[i,i]+Q[j,j])+2*Q[i,j]]
+                        max_a = 0
+                        max_i = 0
+                        for k in range(3):
+                            if(a[k] >= max_a):
+                                max_a = a[k]
+                                max_i = k+1
+                        if(max_i == 1): # if max is 1
+                            simple_trs.append(tr_i)
+                        if(max_i == 2): # if max is 2
+                            simple_trs.append(tr_j)
+                        if(max_i == 3): # if max is both
+                            simple_trs.append(tr_i)
+                            simple_trs.append(tr_j)
+                        marker_array[i] = False
+                        marker_array[j] = False
+                j = j + 1
+
+    # 3. pass: collect all trajectories, that are left:
+    all_else: list[Trajectory] = []
+    for i in range(n):
+        if(marker_array[i]): all_else.append(tr_list[i])
+    # print(marker_array)
+    return simple_trs, all_else
+
+
+class TrGroup:
+    def __init__(self, tr_set: set):
+        self.trs: set = tr_set
+        self.root: TrGroup = None # has no root
+        
+    
+    def isInGroup(self, tr):
+        return tr in self.trs
+    
+    def getRoot(self) -> TrGroup:
+        a = self
+        i = 0
+        while a.root is not None:
+            # print(a.root)
+            a = a.root
+            i = i+1
+            # if(i > 20):
+            #     break
+        return a
+    
+    def addSet(self, to_add):
+        self.trs.update(to_add)
+    
+    def __str__(self):
+        return str(self.trs)
+    
+    def __repr__(self):
+        return self.__str__()
+    
+    def toList(self):
+        return list(self.trs)
+
+        
+# function finds independent subsets (groups) of trajectories
+def getGroupsFromQ(Q):
+    # print("this is get groups from Q:")
+    # print(Q)
+    n, _ = np.shape(Q)
+    Q2 = np.where(np.isclose(Q, 0.0), 0, 1).astype(np.uint8)
+    # print(n)
+    trs: list[int] = list(range(0,n))
+    nodes: list[TrGroup] = []
+    for i in range(n):
+        tr = trs[i]
+        new_node = TrGroup({tr})
+        nodes.append(new_node)
+    # for nod in nodes:
+    #     print(nod, nod.getRoot())
+    # return
+    for i in range(n):
+        for j in range(i+1):
+            if(i==j):
+                continue
+            else:
+                connection_val = Q2[i,j]
+                if(connection_val == 1): # we have connection, see which tr is connected to
+                    tr_from = nodes[i]
+                    tr_to = nodes[j]
+
+                    if(tr_from.getRoot() == tr_to.getRoot()):
+                        pass
+                        # print("same root, skipping")
+                        # tr_from.root = tr_from.getRoot()
+                        # tr_to.root = tr_to.getRoot()
+                    else:
+                        # create new group
+                        new_group = TrGroup(tr_from.getRoot().trs.copy())
+                        new_group.addSet(tr_to.getRoot().trs)
+                        # print("%s (%s) + %s (%s) = %s"%(tr_from, tr_from.getRoot(), tr_to, tr_to.getRoot(), new_group))
+                        tr_from.getRoot().root = new_group
+                        tr_to.getRoot().root = new_group
+
+    ret_val = []
+    all_roots:set[TrGroup] = set({})
+    # maybe (most likely) there is better way of doing this
+    for g in nodes:
+        all_roots.add(g.getRoot())
+    for r in all_roots:
+        ret_val.append(r.toList())
+    
+    return ret_val
+
+# function does multiple things:
+# 1. builds qbp
+# 2. finds closed groups (independent from one another - there are no interactions between them)
+# 3. solves qbp for each group (sorts it first)
+# 4. returns result in same format as qbp solver (v, score)
+def buildGroupSolve(tr_list: list[Trajectory], type=1):
+    print("[buildGroupSolve] solving with groups")
+    if(not tr_list): return (np.array([]).astype(np.uint8), 0.0)
+    Q = buildQBPMatrixX(tr_list, type=type)
+    n, _ = np.shape(Q)
+    print("[buildGroupSolve] og Q (%dx%d):"%(n,n))
+    print(Q)
+    groups = getGroupsFromQ(Q)
+    return_v: list[int] = np.zeros(len(tr_list)).astype(np.uint8)
+    return_score: float = 0.0
+    
+    # deli in vladaj
+    g_i = 1
+    for g in groups:
+        print("group %d %s:"%(g_i, g))
+        selected_trs: list[Trajectory] = []
+        for tr_i in g:
+            selected_trs.append(tr_list[tr_i])
+        
+        g_trs = list(zip(g, selected_trs))
+
+        # NEED TO SORT G ALSO (with same permutation)
+        if(type == 1):
+            g_trs.sort(key=lambda x: x[1].getScore2(), reverse=True)
+        elif(type == 2):
+            g_trs.sort(key=lambda x: x[1].getScoreII(), reverse=True)
+        g, selected_trs = zip(*g_trs)
+        g = list(g)
+        selected_trs = list(selected_trs)
+        
+        Q = buildQBPMatrixX(selected_trs, type=type)
+        print(Q)
+        print("solving Q ...")
+        v = solveQBP2(Q)
+        return_score = return_score+v[1]
+        print(v)
+        selected = getSelected(v[0], g)
+        for s_i in selected:
+            return_v[s_i] = 1
+        # print(selected)
+        g_i = g_i + 1
+    return (return_v, return_score)
+
+
+# --------------------
+
     
 
 tr_colors=[
@@ -1302,6 +1537,53 @@ def path2list(tr_list: list[Trajectory], n_all:int, t_offset:int):
             path_list.append(path_x[i])
     return path_list
 # -------------------------
+
+# function breaks single list of trajectories into multiple smaller ones
+def groupTrs(tr: list[Trajectory], timew=200):
+    print("this is groupTrs:")
+    gropus: list[list[Trajectory]] = []
+
+    # comparator
+    def endStartTimeComparator(tr1: Trajectory, tr2: Trajectory):
+        t1_start = tr1.X[0].t
+        t1_end = tr1.X[-1].t
+        
+        t2_start = tr2.X[0].t
+        t2_end = tr2.X[-1].t
+        
+        t12e_d =  t1_end - t2_end
+        t12s_d =  t1_start - t2_start
+        # if(t12s_d == 0):
+            # return t12e_d
+        # return t12e_d
+        if(t12s_d == 0):
+            return t12e_d
+        return t12s_d
+
+    tr_sorted = sorted(tr, key=cmp_to_key(endStartTimeComparator))
+    # print("sorted:")
+    # printTrListWithStatsOrdered(tr)
+    end_t = tr_sorted[-1].X[-1].t
+    time_w = timew
+    edge = 0
+    used_trs: set[Trajectory] = set()
+    i = 0
+    while(edge < end_t):
+        # print("group %d (edge: %d):"%(i, edge+time_w))
+        group = []
+        for t in tr_sorted:
+            if(t.X[-1].t <= (edge+time_w) and t not in used_trs):
+                # printTrWithStats(t)
+                group.append(t)
+                used_trs.add(t)
+        gropus.append(group)
+        # print()
+        i = i+1
+        
+        
+        edge = edge + time_w
+    return gropus
+    
 
 if __name__ == '__main__':
     pass

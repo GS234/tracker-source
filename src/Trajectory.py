@@ -50,6 +50,9 @@ class Trajectory:
         self.origin.visual_feat = d0.visual_feat
         # ---
 
+        # init previous estimate (upon creation it is none) (is used to calculate possibleNext)
+        self.nextStateEstimate: TDet = None
+
         # self.D: set[Detection] = set([d0]) # all detections in the trajectory (set: to determine intersecting detections with other trajectories to calculate penalty) (kinda redundant, D2 is used mostly)
         self.D2: dict[Detection, float] = {} # 'new' scores
         self.T2: dict[Trajectory, list[float]] = {} # trajectory -> merge score (these scores are added when merging trajectories) tr -> []
@@ -81,7 +84,7 @@ class Trajectory:
     
     # draw it:
     # method draws trajectory to detection space
-    def drawToSpace(self, color=None, at_t=-1, max_len=10):
+    def drawToSpace(self, color=None, at_t=-1, max_len=10, draw_pred=False, draw_ends=True):
         color_is_set = True
         if(color is None):
             color_is_set = False
@@ -122,9 +125,12 @@ class Trajectory:
                 color_fade = color_fade+color_fade_rate
                 drawLine(self.detectionSpace.map, xi,xi1,tr_color)
                 # self.detectionSpace.drawDsearchRegionAroundDetection(xi1)
-            drawX(self.detectionSpace.map, self.X[-1].x, x_color) # end
+            if(draw_ends): drawX(self.detectionSpace.map, self.X[-1].x, x_color) # end
+            # draw estimate:
+            if(draw_pred and self.nextStateEstimate is not None and not self.term):
+                drawBoundingBox(self.detectionSpace.map, self.nextStateEstimate.bb, color=[235, 158, 52])
         # draw on top of everything else
-        if(len(self.X) > 0): # if has one
+        if(len(self.X) > 0 and draw_ends): # if has one
             drawO(self.detectionSpace.map, self.X[0].x, x_color) # start
             drawDot(self.detectionSpace.map, self.X[0].x, color=color) # start
     
@@ -139,6 +145,7 @@ class Trajectory:
         t_ret.not_selected_strike = self.not_selected_strike
         t_ret.color = self.color
         t_ret.term = self.term # also this?
+        t_ret.nextStateEstimate = self.nextStateEstimate # also need to copy this, because we do not build it (if we would build it, build would do that for us)
         # also not so much unique id?
         t_ret.not_so_much_unique_id = self.not_so_much_unique_id
 
@@ -531,8 +538,7 @@ class Trajectory:
         # might not need to add it (because it has detections: that is normally the case)
         td_next = TDet(td_current.x, td_current.t+dt, 0, td_current.theta)
         # ALSO ADD COLOR MODEL
-        td_next.color_hist = td_current.color_hist
-        td_next.hasHist = td_current.hasHist
+        
         
         rect_a = 10
         bb_x, bb_y = td_current.x[0]-rect_a//2, td_current.x[1]-rect_a//2
@@ -550,8 +556,8 @@ class Trajectory:
             bb_color = [100,255,255]
         if(self.id in {138,144}):
             bb_color = [100, 255, 100]
-        drawBoundingBox(self.detectionSpace.map, td_next.bb, bb_color)
-        drawBoundingBox(self.detectionSpace.flow_img, td_next.bb, bb_color)
+        # drawBoundingBox(self.detectionSpace.map, td_next.bb, bb_color)
+        # drawBoundingBox(self.detectionSpace.flow_img, td_next.bb, bb_color)
         
         mag,ang = getVecMagAng(flow_vec2)
         td_next.v = mag
@@ -743,27 +749,35 @@ class Trajectory:
         if(feature_map_and_padding is None):
             use_features = False
         
-        td_current: TDet = self.X[-1] # current tdet (last trajectory point)
+        # td_current: TDet = self.X[-1] # current tdet (last trajectory point)
         # print("current of t"+str(self.id)+": ",td_current, self.X)
-        td_next: TDet = self.estimateNextUsingFlow(td_current)
+        td_next: TDet
+        # td_next = self.estimateNextUsingFlow(td_current)
+        td_next = self.nextStateEstimate # first time it is set in build
+        # print("td_next is: %s"%td_next)
+        # if(td_next is None): printTrWithStats(self)
+        # td_next
+        td_next_est = self.estimateNextUsingFlow(td_next) # eoae - estimate of an estimate
+        # print("td next est: %s"%td_next_est)
         if(use_features): td_next.visual_feat = self.visual_avg # set current tr's visual appearance (is used in dspace.getprob4)
 
         # collectWithin2:
         next_dets, next_probs = self.detectionSpace.collectWithin2(td_next.t, td_next)
+        print("t%d - dets: %s"%(self.id, str(next_dets)))
 
         # debug prints:
         # printTrWithStats(self)
 
         # print("this is det probs: ", next_probs)
 
-        bb_color = [0,255,255]
+        # bb_color = [0,255,255]
         # print("self.id: ",self.id)
         # if(self.id in {137,142,143}):
         #     bb_color = [0,0,255]
         # if(self.id in {138,144}):
         #     bb_color = [255, 0, 0]
-        if(not self.term):
-            drawBoundingBox(self.detectionSpace.map, td_next.bb, bb_color)
+        # if(not self.term):
+        #     drawBoundingBox(self.detectionSpace.map, td_next_est.bb, bb_color)
         
 
         # print("dets, probs of t"+str(self.id)+": ",next_dets, next_probs)
@@ -779,8 +793,9 @@ class Trajectory:
             for i in range(n_dets):
                 d_i = next_dets[i]
                 d_i_prob = next_probs[i]
+                d_i_est = self.estimateNextUsingFlow(d_i) # compute next estimate to add to hypothesis
 
-                if(d_i_prob >= det_add_thr):
+                if(d_i_prob >= det_add_thr): # because of threshold, no detection may be added, so we need else case
                 # if(d_i_prob >= 0):
                     self.holes_ref = 0
                     next_tdet = TDet_from_Detection(d_i) # has no v, theta, important is, that it has bounding box; should probably also compare color model, but when we have one
@@ -788,6 +803,7 @@ class Trajectory:
                     
                     if(i2 == 0): # first one continue this one, every else copy&add
                         self.X.append(next_tdet)
+                        self.nextStateEstimate = d_i_est
                         # self.D.add(d_i)
                         self.D2[d_i]=d_i_prob # also add score to trajectory
                         if(use_features):
@@ -799,6 +815,7 @@ class Trajectory:
                         next_t = this_current.getCopy(deep=False)
                         print("[!] FORKING t"+str(self.id)+" INTO t"+str(next_t.id), "(iou: ",d_i_prob," )")
                         next_t.X.append(next_tdet)
+                        next_t.nextStateEstimate = d_i_est
                         next_t.D2[d_i]=d_i_prob # also add score to trajectory
                         next_tr.append(next_t)
                         # next_tr_origins.add()
@@ -810,6 +827,7 @@ class Trajectory:
             if(i2 == 0): # it means that no detection has been added, so continue current trajectory with estimate
                 self.holes_ref = self.holes_ref + 1
                 self.X.append(td_next)
+                self.nextStateEstimate = td_next_est
                 self.D2[td_next]=EST_SCORE
                 if(use_features): # same as before, just use estimate instead of actual detection
                     patches = getFeaturesFromFeatureMapAndPadding3(td_next,feature_map_and_padding)
@@ -820,6 +838,7 @@ class Trajectory:
         else: # continue current trajectory with estimate, if there are no next detections
             self.holes_ref = self.holes_ref + 1
             self.X.append(td_next) # continue current, with estimate
+            self.nextStateEstimate = td_next_est
             self.D2[td_next]=EST_SCORE # as detection add estimate
             if(use_features): # same as before, just use estimate instead of actual detection
                 patches = getFeaturesFromFeatureMapAndPadding3(td_next,feature_map_and_padding)
@@ -842,6 +861,7 @@ class Trajectory:
     # new build method (for now only append origin)
     def build2(self):
         self.X.append(self.origin)
+        self.nextStateEstimate = self.estimateNextUsingFlow(self.origin) # first next estimate
         self.D2[self.originDet] = 1.0
     
     # methods used to build QPB matrix:
@@ -874,7 +894,7 @@ class Trajectory:
     # method returns interaction cost of two trajectories
     def getInteractionCost2(self, other_t: Trajectory):
         # P1 = 0.05 # tie-breaker parameter
-        P1 = 0.1 # tie-breaker parameter
+        P1 = 0.1 # tie-breaker parameter: just to make sure that if in any case two completely equal hypotheses enter selection stage, only one of them gets selected (algorithm would select both: check in case of: [[1,-0.5],[-0.5,1]] (this is needed implementation-specific, not conceptually)
         # 1. get points in intersection
         det_intersect = self.D2.keys() & other_t.D2.keys()
 
@@ -886,6 +906,7 @@ class Trajectory:
         # 2. calculate g of intersecting points (with D of the weaker hypothesis)
         q_ij = 0
         # if there is only one point in intersection, then trajectories have merged - keep one that has bigger score
+        # this we can do, because we do not build trajectories from scratch every time
         if(len(det_intersect) == 1):
             # print("JOIN FORK ----->")
             det = det_intersect.pop()
@@ -1120,6 +1141,9 @@ class Trajectory:
     # n_ext: n frames to extrapolate
     # [WARN] might have problems with vertical lines (untested)
     def getNextBbII(self, n:int = 5, n_ext = 5, debug=False):
+        # if(self.id == 59):
+        #     n=30
+        #     n_ext = 65
         last_n:list[TDet] = self.X[-n:]
         ret_bb = last_n[-1].bb.copy()
         if(len(last_n) == 1): # we have only one point (origin)
@@ -1168,11 +1192,14 @@ class Trajectory:
         x_avg = np.array([np.average(last_n_x), np.average(last_n_y)]) # last_n points average
         x_next = x_avg + (n/2 + n_ext)*pr_xv
 
-        # drawLine(self.detectionSpace.map, x_avg, x_next)
-        
         
         # x_next is center of bb, so we need to subtract its h,w
         ret_bb[0:2] = list(np.array(x_next) - np.array(ret_bb[2:])/2)
+        # if(self.id == 59):
+        #     drawLine(self.detectionSpace.map, x_avg, x_next)
+        #     drawBoundingBox(self.detectionSpace.map, ret_bb, [200,200,0])
+        #     drawX(self.detectionSpace.map, x_next)
+        #     self.detectionSpace.showSpace(draw_dets=False, draw_last_dets_bb=False)
 
         if(debug):
             return x_next, x_avg, pr_xv, poly, ret_bb
@@ -1180,7 +1207,7 @@ class Trajectory:
 
 
     # III. other trajectories: connect with flow
-    def getPossibleNext3(self, tr_list, flow_path, time_window=20, max_iou_diff=0.02, iou_thresh=0.1, a=A1):
+    def getPossibleNext3(self, tr_list: list[Trajectory], flow_path, time_window=20, max_iou_diff=0.02, iou_thresh=0.1, a=A1):
         print("this is getPossibleNext3")
         possibleNext = []
         for t in tr_list:
@@ -1198,8 +1225,10 @@ class Trajectory:
 
             # second_lastX = second.X[-1]
             time_diff = second_firstX.t-first_lastX.t
-            # print(time_diff, time_window)
+            # if(time_diff >= 0):
             if(time_diff >= 0 and time_diff < time_window):
+                # if(time_diff == 0):
+                #     time_diff = 20 # WARN: for testing only!!
                 # drawBoundingBox(self.detectionSpace.map,first_lastX.bb,[54,181,255])
                 # drawBoundingBox(self.detectionSpace.map,second_firstX.bb,[26,62,240])
                 
@@ -1217,9 +1246,9 @@ class Trajectory:
                     print("this tr is exited")
                 # print(time_diff)
                 skip_this = False
-                for i in range(time_diff+1):
+                for i in range(time_diff):
                     next_bb = self.getNextBbIII(detF, detF.t+i, flow_path=flow_path)
-                    prev_bb = self.getNextBbIII(detB, detB.t-i+1, flow_path=flow_path, forward=False)
+                    prev_bb = self.getNextBbIII(detB, detB.t-i, flow_path=flow_path, forward=False)
 
                     # next_bb = [1,1,1,1]
                     # prev_bb = [1,1,1,1]
@@ -1237,13 +1266,15 @@ class Trajectory:
 
                     # debug draw
                     # drawBoundingBox(self.detectionSpace.map, next_bb)
-                    # drawDot(self.detectionSpace.map, np.array(next_bb[0:2])+np.array(next_bb[2:])/2, [54,181,255])
-                    # drawDot(self.detectionSpace.map, np.array(prev_bb[0:2])+np.array(prev_bb[2:])/2, [26,62,240])
-                    # self.detectionSpace.showSpace(draw_dets=False, draw_last_dets_bb=False)
+                    
+                    # drawDot(self.detectionSpace.map, getBBCenter(next_bb), [54,181,255])
+                    # drawDot(self.detectionSpace.map, getBBCenter(prev_bb), [26,62,240])
+                    
                     detF.bb = next_bb
                     detB.bb = prev_bb
                 if(skip_this):
                     continue # continue outer loop on error (if bb-s could not be determined)
+                
                 ext_tdets = ext_tdets[0:-2]
                 # self.detectionSpace.showSpace(draw_dets=False, draw_last_dets_bb=False)
                 
@@ -1254,6 +1285,18 @@ class Trajectory:
                 
                 this_other_iou = IoU(detF, second_firstX)
                 other_this_iou = IoU(detB, first_lastX)
+                
+                # self.drawToSpace()
+                # t.drawToSpace()
+                # drawBoundingBox(self.detectionSpace.map, detF.bb, color=[0,0,255])
+                # self.detectionSpace.showSpace(draw_dets=False, draw_last_dets_bb=False, dspace_winname="connect%d"%time_diff, draw_exit_zone=False)
+                # drawBoundingBox(self.detectionSpace.map, detB.bb, color=[0,255,0])
+                # self.detectionSpace.showSpace(draw_dets=False, draw_last_dets_bb=False, dspace_winname="connect%d"%time_diff,draw_exit_zone=False)
+                # drawBoundingBox(self.detectionSpace.map, second_firstX.bb, color=[90,90,255])
+                # self.detectionSpace.showSpace(draw_dets=False, draw_last_dets_bb=False, dspace_winname="connect%d"%time_diff,draw_exit_zone=False)
+                # drawBoundingBox(self.detectionSpace.map, first_lastX.bb, color=[140,255,140])
+                # self.detectionSpace.showSpace(draw_dets=False, draw_last_dets_bb=False, dspace_winname="connect%d"%time_diff,draw_exit_zone=False)
+                # self.detectionSpace.clearSpace()
                 
                 v1 = detB_x-np.array(first_lastX.x)
                 v2 = np.array(second_firstX.x)-detF_x

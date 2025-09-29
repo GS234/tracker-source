@@ -8,7 +8,7 @@ import math
 import traceback
 import os
 import glob
-from FeatureExtractor import roiPool, patchesInBB, getImagePadding
+from FeatureExtractor import roiPool, patchesInBB, getImagePadding # might be causing circular import error
 from Detection import Detection, TDet
 from collections import deque # for queue (de - double ended) (solveQBP2)
 from configparser import ConfigParser
@@ -104,7 +104,11 @@ def coords2det2(X):
         i = i+1
     return detections
 
-def detections2map(D, map, color: list = [255,255,255]): # draws detections
+def detections2map(D: list[Detection], map, color: list = None): # draws detections
+    default_color = [0,0,0]
+    use_det_color_if_set = False
+    if(color is None):
+        use_det_color_if_set = True
     h,w,_ = np.shape(map)
     t_now = len(D) # which time instant is it
     for d in D:
@@ -116,11 +120,15 @@ def detections2map(D, map, color: list = [255,255,255]): # draws detections
         x = x%h
         y = y%w
         
+        c = color
+        if(use_det_color_if_set):
+            if(d.color is not None): c = d.color
+            else: c = default_color
         # map[x,y]= 1.0 - (1.0 / (1.0+(d.t/20.0)))*0.9 # more correct, as more recent detections should be brighter
         # map[x,y]= (1.0 / (1.0+(d.t/8))) # I like this more, but is not correct because of ^
-        map[x,y]= color
+        map[x,y]= c
 
-def coords2map(X, map, color: list = [255,255,255], overwrite=True):
+def coords2map(X, map, color: list = [255,255,255], overwrite=True, opacity=1):
     h,w,_ = np.shape(map)
     # print("X: ",X)
     for point in X:
@@ -131,7 +139,11 @@ def coords2map(X, map, color: list = [255,255,255], overwrite=True):
         
         if(overwrite or np.sum(map[x,y]) == 0):
             # print(x,y)
-            map[x,y] = color
+            value_to_write = color
+            if(opacity != 1):
+                # print("lt1")
+                value_to_write = (opacity*np.array(color).astype(np.float32) + (1-opacity)*map[x,y].astype(np.float32)).astype(np.uint8)
+            map[x,y] = value_to_write
 
 
 
@@ -661,7 +673,7 @@ def drawLine2(image, x1, x2, color=[0,0,255], shape='.'):
         drawShape(shape=shape_l, image=image, c=x, color=color)
 
 # method draws bounding box in detection space
-def drawBoundingBox(image, bb: tuple, color: list = [0,255,0]) -> None:
+def drawBoundingBox(image, bb: tuple, color: list = [0,255,0], opacity=1) -> None:
     # print(W, H)
     # 1. starting coordinate:
     y, x, h, w = bb
@@ -679,7 +691,7 @@ def drawBoundingBox(image, bb: tuple, color: list = [0,255,0]) -> None:
     for i in range(h):
         points.append((x, y+i+1))
         points.append((x+w, y+i))
-    coords2map(points, image, color=color, overwrite=True)
+    coords2map(points, image, color=color, overwrite=True, opacity=opacity)
 
 # function shows image in named window with name name
 def showInNamed(name, image):
@@ -985,7 +997,7 @@ def solveQBP2(Q: np.array, debug=False):
             V[v_i] = 0
         n_iter += 1
     
-    if(debug):
+    if(debug or True):
         print("n_iter: " + str(n_iter), " n_combinations: ", (1 << n_el)) # some stats
     # return (v_max, D_max)
     return (local_max_v, local_max_d)
@@ -1583,9 +1595,20 @@ def groupTrs(tr: list[Trajectory], timew=200):
         
         edge = edge + time_w
     return gropus
+
+def testFunc():
+    import time
     
+    for i in range(10,50):
+        Q = np.diag(np.ones(i))
+        print("size: %d, %d"%(i,i))
+        start_t = time.time()
+        v = solveQBP2(Q)
+        end_t = time.time()
+        print(v, "time: %.2f"%(end_t-start_t))
+
 
 if __name__ == '__main__':
-    pass
-    
+    testFunc()
+
 

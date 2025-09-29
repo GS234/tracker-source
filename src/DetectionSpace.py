@@ -18,7 +18,10 @@ EXIT_ZONE_OFFSET = 5
 A1 = float(OPTIONS_TR['a1'])
 
 class DetectionSpace:
+    Dsid = 0 # so that different dspaces show in different windows
     def __init__(self, h,w, D: list = None, time_offset = 0, show_flow=True, disable_vis=False):
+        self.id = DetectionSpace.Dsid
+        DetectionSpace.Dsid = DetectionSpace.Dsid+1
         self.s1, self.s2 = S1, S2 # so uncivilized, but necessary
         self.FLOW_PATH = "" # init flow path (WARN: not using DATA_ROOT variable; should provide full path) (used by connect points in Trajectory class (through dspace object pointer))
 
@@ -51,7 +54,7 @@ class DetectionSpace:
             scale_f = 6.0
             winsize = ((np.array(self.hw)+np.array([40,0]))*scale_f).astype(np.int32)
             # dspace - main window
-            self.dspace_winname = "detection space"
+            self.dspace_winname = "detection space %d"%self.id
             cv.namedWindow(self.dspace_winname, cv.WINDOW_NORMAL)
             cv.resizeWindow(self.dspace_winname, winsize[1],winsize[0])
 
@@ -196,7 +199,7 @@ class DetectionSpace:
         return ((x <= EXIT_ZONE_OFFSET) or (x >= self.hw[1]-EXIT_ZONE_OFFSET) or (y <= EXIT_ZONE_OFFSET) or (y >= self.hw[0]-EXIT_ZONE_OFFSET))
     # ----------------------------------------------------------------------------------------
 
-    def showSpace(self, det_color=[0,0,0], draw_dets=True, at_time=-1, draw_last_dets_bb=True, bb_color=None, dspace_winname=None, det_center_shape='x'):
+    def showSpace(self, det_color=None, draw_dets=True, at_time=-1, draw_last_dets_bb=True, bb_color=None, dspace_winname=None, det_center_shape='x', draw_exit_zone=True, use_waitkey=True):
         if(at_time != -1):
             at_time = at_time-self.time_offset
             if(at_time < 0):
@@ -206,15 +209,17 @@ class DetectionSpace:
             return
         if(bb_color is None):
             bb_color = [0,255,0]
-        # draw exit zone (border)
-        off = self.exit_zone
-        exit_zone_color=[100,100,100]
-        ul,bl,ur,br = (off,off),(off,self.hw[0]-off-1),(self.hw[1]-off-1, off),(self.hw[1]-off-1, self.hw[0]-off+1-1) # +1? because if this is not added, rectangle is one px short
-        ul,bl,ur,br = np.array(ul),np.array(bl),np.array(ur),np.array(br)
-        drawLine(self.map, ul,bl,color=exit_zone_color)
-        drawLine(self.map, ul,ur,color=exit_zone_color)
-        drawLine(self.map, ur,br,color=exit_zone_color)
-        drawLine(self.map, bl,br,color=exit_zone_color)
+        
+        if(draw_exit_zone):
+            # draw exit zone (border)
+            off = self.exit_zone
+            exit_zone_color=[100,100,100]
+            ul,bl,ur,br = (off,off),(off,self.hw[0]-off-1),(self.hw[1]-off-1, off),(self.hw[1]-off-1, self.hw[0]-off+1-1) # +1? because if this is not added, rectangle is one px short
+            ul,bl,ur,br = np.array(ul),np.array(bl),np.array(ur),np.array(br)
+            drawLine(self.map, ul,bl,color=exit_zone_color)
+            drawLine(self.map, ul,ur,color=exit_zone_color)
+            drawLine(self.map, ur,br,color=exit_zone_color)
+            drawLine(self.map, bl,br,color=exit_zone_color)
 
         if(dspace_winname is None):
             dspace_winname = self.dspace_winname
@@ -251,7 +256,8 @@ class DetectionSpace:
         # scale_f = 1.5
         # winsize = (np.array(self.hw) * scale_f).astype(np.int32)
         if(self.show_flow):
-            cv.imshow(self.flow_winname, self.flow_img)
+            showInNamed(self.flow_winname, self.flow_img)
+            # cv.imshow(self.flow_winname, self.flow_img)
         # cv.imshow(self.dspace_winname, self.map)
 
         # test of method exited:
@@ -269,8 +275,10 @@ class DetectionSpace:
         #     drawDot(self.map, x, c)
 
 
-        cv.imshow(dspace_winname, self.map)
-        cv.waitKey(0)
+        # cv.imshow(dspace_winname, self.map)
+        showInNamed(dspace_winname, self.map)
+        if(use_waitkey):
+            cv.waitKey(0)
         # while cv.getWindowProperty(self.window_name, cv.WND_PROP_VISIBLE) >= 1:
         #     cv.waitKey(1)
         # cv.destroyAllWindows()

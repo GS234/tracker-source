@@ -98,10 +98,10 @@ class FeatureExtractor():
         # init model
         print("[FEATURE] init model")
         backbone_archs = {
-            "small": "vits14",
-            "base": "vitb14",
-            "large": "vitl14",
-            "giant": "vitg14",
+            "small": "vits14", #384
+            "base": "vitb14", #768
+            "large": "vitl14", #1024
+            "giant": "vitg14", #1536
         }
         backbone_arch = backbone_archs[model_size]
         backbone_name = f"dinov2_{backbone_arch}"

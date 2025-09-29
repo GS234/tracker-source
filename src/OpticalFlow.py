@@ -57,7 +57,7 @@ class OpticalFlow:
         print("[FLOW] init done") #, carry on
         self.no_print = no_print
 
-    # method computes optical flow between image at i and i+1
+    # method computes optical flow between image at i and i+1 (from current to next)
     def computeFlowAtI(self, i):
         with torch.no_grad():
             # get images

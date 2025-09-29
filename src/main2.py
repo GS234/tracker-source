@@ -291,6 +291,9 @@ def mergeTrajectories2(tr_list:list[tuple[Trajectory, float, float]]) -> Traject
             t_merged.visual_n = new_features_i
             # ---------------
 
+            # also update estimate:
+            t_merged.nextStateEstimate = t.nextStateEstimate
+
 
             if(t.id < min_id):
                 min_id = t.not_so_much_unique_id
@@ -343,7 +346,7 @@ def getPossibleNextWithMemo(tr: Trajectory, tr_list:list[Trajectory], time_windo
 # generates trajectories in sequences (not exceeding recursion depth of extendAllPossibleNext, which is value of max_n)
 # resulting in max merged trajectory sizes of max_n. Those intermediate trajectries are then passed through qbp for 
 # minimizing the need for searching through large number of less important trajectories (note that search space can
-# grow uncontrollably, as observed during testing). The merging now continues for these new (selected) trajectories
+# grow uncontrollably, as observed during testing). The merging now continues from these new (selected) trajectories
 def getMergedHypothesis(tr:Trajectory, tr_list: list[Trajectory], time_window=20, type=1, also_overlapping=False, reset_memo=True, also_drop_redundant=False, max_n=-1, with_qbp=False):
     # this is needed if used alone, when looping, this should be done outside of loop instead (if loop: reset_memo = False)
     global MAX_N_TR_MERGE_ONCE
@@ -399,7 +402,7 @@ def getMergedHypothesis(tr:Trajectory, tr_list: list[Trajectory], time_window=20
             
     
 # function generates and returns all possible connections with other trajectories (similar to extend, but it works with whole trajectories now)
-# just a loop version of ^
+# just a loop version of ^ (getMergedHypothesis)
 def getMergedHypotheses(tr_list: list[Trajectory], time_window=20, type=1, also_overlapping=False, also_drop_redundant=False):
     # init memo:
     global trToPossibleNext
@@ -480,7 +483,7 @@ def extendAllPossibleNext(t:Trajectory, collected:list[tuple[Trajectory, float]]
     # 3. return all collected trajectories
     mtr_len = len(mtr_hypotheses)
     if((drop_redundant_after_n > 0) and (mtr_len > drop_redundant_after_n)):
-        print("DROPING REDUNDANT: ----------------------------------------------------------------------------------------- IOIOIOIOIOOIOIOIOIOIOIO")
+        print("DROPING REDUNDANT: ----------------------------------------------------------------------------------------- IOIOIOIOIOOIOIOIOIOIOIO") # oiiai :)
         mtr_hypotheses = dropRedundant(mtr_hypotheses, red_level=2)
         # print("length (previous, new): %d, %d"%(mtr_len, len(mtr_hypotheses)))
     # print(mtr_len)
@@ -660,9 +663,10 @@ def main():
     # INIT DSPACE
     frame = getFrameAtI(t_global,FRAMES_PATH)
     h,w,_ = np.shape(frame)
-    # dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n), show_flow=False, disable_vis=RUN_ALL) # also pass time offset for using correct indices | no visualization on run all
-    # dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n), show_flow=True, disable_vis=RUN_ALL) # also pass time offset for using correct indices | no visualization on run all
+    # dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n), show_flow=False, disable_vis=RUN_ALL)
+    # dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n), show_flow=True, disable_vis=RUN_ALL)
     dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n), show_flow=False, disable_vis=RUN_ALL) # also pass time offset for using correct indices | no visualization on run all
+    # dspace = DetectionSpace(h,w, time_offset=(T_OFFSET-n), show_flow=True, disable_vis=RUN_ALL) # also pass time offset for using correct indices | no visualization on run all
 
     # set last frame
     dspace.lastFrame = frame.copy()
@@ -743,21 +747,10 @@ def main():
 
     # EXTEND
     skip_n = 0
-    # skip_n = 27
-    # skip_n = 40
-    # skip_n = 75
-    # skip_n = 80
-    # skip_n = 119
-    # skip_n = 200
-    # skip_n = 285
-    # skip_n = 298
-    # skip_n = 316
-    # skip_n = 340
-    # skip_n = 555
-    # skip_n = 650
-    # skip_n = 2009
-    # skip_n = 1108
-    # skip_n = 4110 # all
+    # skip_n = 70
+    # skip_n = 388
+    # skip_n = 42
+    # skip_n = 4110 # all (of sequence LaSOT_bird-2)
     
     # for visualization (feature maps)
     showing_prev = set() # set showing windows
@@ -784,6 +777,11 @@ def main():
             for d_i in next_dets:
                 # get patches: getPatchesInBB + roiPool (in helper func)
                 patches = getFeaturesFromFeatureMapAndPadding3(d_i, feature_map_and_padding=(frame_features, frame_feat_padding))
+                
+                # patches_np = getFeaturesFromFeatureMapAndPadding3(d_i, feature_map_and_padding=(frame_features, frame_feat_padding), pooled=False)
+                # showInNamed("patches of %d"%d_i.id, patches.astype(np.uint8))
+                # showInNamed("patches of %d - np"%d_i.id, patches_np)
+                
                 d_i.visual_feat = patches
             # ---
 
@@ -914,6 +912,10 @@ def main():
             # 6. hypothesis selection:
             
             # 6.1 analyze trs with Q matrix: get pure, drop redundant
+            # Q = buildQBPMatrixX(tr)
+            # np.savetxt("Q1.txt",Q, fmt="%7.3f")
+            # print("Q is:")
+            # print(Q)
             pure_trs, not_pure = analyzeTrsWithQ(tr) # analyze, drop out pure and copies of same (add pure, do qbp with all else)
             
             # 6.2 build Q with trs, that are not pure:
@@ -962,7 +964,7 @@ def main():
                 for t in tr:
                     printTrWithStats(t, i_t=t_i)
                     # print("%3d. t%-5s (t%-5s) c=%-3d, len=%-4d, score=%9.4f %5d - %-5d, f:%s" % (t_i,t.not_so_much_unique_id,t.id, t.color[2], len(t.X), t.getScore2(), t.X[0].t, t.X[-1].t, t.term))
-                    t.drawToSpace(at_t=t_global)
+                    t.drawToSpace(at_t=t_global, draw_pred=True)
                     showing_next.add(t)
                     t_i = t_i+1
             # ---
@@ -1777,13 +1779,13 @@ def extendToEnd2(tr_: Trajectory, tr_list: list[Trajectory], time_window=100, al
             # printTrWithStats(tr)
             tr_end_time = tr.X[-1].t
             # print("possible next based on time:")
-            possible_next = []
+            # possible_next = []
             i = 0
             max_next_visual_score = 0
             next_tr_with_max_score = None
             for a in tr_list:
                 if a.X[0].t > tr_end_time:
-                    possible_next.append(a)
+                    # possible_next.append(a)
                     # find visual similarity:
                     score = getProbIVBF([0,0,0,0],tr.visual_avg, [0,0,0,0], a.visual_avg, a=0) # consider only visual score (a=0)
                     if(max_next_visual_score < score):
@@ -1813,7 +1815,7 @@ def extendToEnd2(tr_: Trajectory, tr_list: list[Trajectory], time_window=100, al
         # all_trs.sort(key=lambda x: x.getScoreII(), reverse=True) # sort to minimize chance of getting stuck in some local minimum
         # Q=buildQBPMatrixX(all_trs, type=2)
         # v = solveQBP2(Q)
-        v = buildGroupSolve(all_possible_next, type=2)
+        v = buildGroupSolve(all_trs, type=2)
         all_trs = getSelected(v[0], all_trs)
         ii = ii+1
         continue_flag = can_any_continue # if there are hypotheses, that can be extended, then continue, otherwise do not
@@ -2060,7 +2062,7 @@ def visualizeTrs2():
         # print(gtdet)
         if(gtdet):
             drawBoundingBox(dspace.map, bbResize(gtdet[0].bb,-1), [0,0,255])
-        dspace.showSpace(draw_dets=False, draw_last_dets_bb=False)
+        dspace.showSpace(draw_dets=False, draw_last_dets_bb=False, draw_exit_zone=False)
         dspace.clearSpace()
         t_global = t_global + 1
 
@@ -2484,6 +2486,15 @@ if __name__ == "__main__":
             mergeAndvisualizeAllTrs()
         else:
             import other_mains2
+            # parse options here (at least precomputed paths)
+            # sequence_str = OPTIONS['sequence']
+            # _, _, _, _, pfp, pfep = getSequenceConsts(sequence_str)
+            # if(OPTIONS['use_precomputed_flow']):
+            #     USE_PRECOMPUTED = True
+            #     print("using precomputed flow")
+            #     PRECOMPUTED_FLOW_PATH = pfp
+
+                
             other_mains2.mainInitSelect(MAIN_N, OPTIONS)
 
 
